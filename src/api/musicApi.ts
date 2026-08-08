@@ -13,3 +13,9 @@ export async function fetchDownloadLink(
     const json = await invoke<string>('fetch_download_link', { songId, quality })
     return JSON.parse(json) as { url: string; key: string }
 }
+
+// 新增：获取热搜关键词
+export async function getHotKeywords(): Promise<string[]> {
+    const json = await invoke<string>('fetch_hot_keywords')
+    return JSON.parse(json) as string[]
+}

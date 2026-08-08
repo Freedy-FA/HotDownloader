@@ -53,6 +53,7 @@ pub fn run() {
             commands::file_ops::open_file_location,
             commands::api::search_songs,
             commands::api::fetch_download_link,
+            commands::api::fetch_hot_keywords,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
