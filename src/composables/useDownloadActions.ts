@@ -1,7 +1,7 @@
 import { h, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDialog, NSelect } from 'naive-ui'
-import type { Quality, SongInfo, TaskRecord } from '../types'
+import type { Quality, SongInfo, TaskRecord, QualityItem } from '../types'
 import { QUALITY_DOWNGRADE_ORDER } from '../types'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useTaskStore } from '../stores/taskStore'
@@ -54,6 +54,39 @@ export function useDownloadActions() {
         })
     }
 
+    /**
+     * 根据期望品质和歌曲可用品质列表，返回实际可用的品质项（含 filename）
+     * 若无法满足且开启自动降级，则按降级顺序选择第一个可用品质
+     * 若仍无可用品质，返回 null
+     */
+    function resolveQualityForSong(
+        song: SongInfo,
+        desiredQuality: Quality
+    ): QualityItem | null {
+        // 直接匹配
+        const direct = song.qualities.find((q) => q.quality === desiredQuality)
+        if (direct) return direct
+
+        // 自动降级
+        if (settingsStore.settings.autoDowngrade) {
+            for (const fallback of QUALITY_DOWNGRADE_ORDER) {
+                const found = song.qualities.find((q) => q.quality === fallback)
+                if (found) return found
+            }
+        }
+        return null
+    }
+
+    /** 异步为 waiting 任务获取下载链接并更新 */
+    async function fetchAndUpdateTask(taskId: string, songId: string, filename: string) {
+        try {
+            const { url, key } = await musicApi.fetchDownloadLink(songId, filename)
+            taskStore.updateTaskUrl(taskId, url, key, 0)
+        } catch (error: any) {
+            taskStore.errorTask(taskId, error.message || '获取下载链接失败')
+        }
+    }
+
     async function downloadSingle(
         song: SongInfo,
         forceQuality?: Quality
@@ -71,6 +104,31 @@ export function useDownloadActions() {
             quality = settingsStore.settings.defaultQuality
         }
 
+        const resolved = resolveQualityForSong(song, quality)
+        if (!resolved) {
+            // 直接创建错误任务
+            const taskId = generateTaskId()
+            const task: TaskRecord = {
+                id: taskId,
+                songId: song.id,
+                songTitle: song.title,
+                artist: song.artist,
+                album: song.album,
+                coverUrl: song.coverUrl,
+                mediaMid: song.mediaMid,
+                filename: '',
+                quality,
+                status: 'error',
+                errorMsg: '所选音质不可用',
+                fileSize: 0,
+                downloaded: 0,
+                retryCount: 0,
+                addedAt: Date.now(),
+            }
+            taskStore.addTask(task)
+            return
+        }
+
         const taskId = generateTaskId()
         const task: TaskRecord = {
             id: taskId,
@@ -79,7 +137,9 @@ export function useDownloadActions() {
             artist: song.artist,
             album: song.album,
             coverUrl: song.coverUrl,
-            quality,
+            mediaMid: song.mediaMid,
+            filename: resolved.filename,
+            quality: resolved.quality as Quality, // 实际品质标签
             status: 'waiting',
             fileSize: 0,
             downloaded: 0,
@@ -88,13 +148,8 @@ export function useDownloadActions() {
         }
 
         taskStore.addTask(task)
-
-        try {
-            const { url, key } = await musicApi.fetchDownloadLink(song.id, quality)
-            taskStore.updateTaskUrl(taskId, url, key, 0)
-        } catch (error: any) {
-            taskStore.errorTask(taskId, error.message || '所选音质不可用')
-        }
+        // 异步获取链接，不阻塞
+        fetchAndUpdateTask(taskId, song.id, resolved.filename)
 
         if (settingsStore.settings.jumpToTask) {
             router.push('/task')
@@ -113,7 +168,31 @@ export function useDownloadActions() {
             quality = settingsStore.settings.defaultQuality
         }
 
-        const taskIds = songs.map((song) => {
+        for (const song of songs) {
+            const resolved = resolveQualityForSong(song, quality)
+            if (!resolved) {
+                const taskId = generateTaskId()
+                const task: TaskRecord = {
+                    id: taskId,
+                    songId: song.id,
+                    songTitle: song.title,
+                    artist: song.artist,
+                    album: song.album,
+                    coverUrl: song.coverUrl,
+                    mediaMid: song.mediaMid,
+                    filename: '',
+                    quality,
+                    status: 'error',
+                    errorMsg: '所选音质不可用',
+                    fileSize: 0,
+                    downloaded: 0,
+                    retryCount: 0,
+                    addedAt: Date.now(),
+                }
+                taskStore.addTask(task)
+                continue
+            }
+
             const taskId = generateTaskId()
             const task: TaskRecord = {
                 id: taskId,
@@ -122,7 +201,9 @@ export function useDownloadActions() {
                 artist: song.artist,
                 album: song.album,
                 coverUrl: song.coverUrl,
-                quality,
+                mediaMid: song.mediaMid,
+                filename: resolved.filename,
+                quality: resolved.quality as Quality,
                 status: 'waiting',
                 fileSize: 0,
                 downloaded: 0,
@@ -130,30 +211,8 @@ export function useDownloadActions() {
                 addedAt: Date.now(),
             }
             taskStore.addTask(task)
-            return { taskId, songId: song.id }
-        })
-
-        const results = await Promise.allSettled(
-            taskIds.map(({ taskId, songId }) =>
-                musicApi.fetchDownloadLink(songId, quality).then(
-                    (res) => ({ taskId, url: res.url, key: res.key }),
-                    (err) => ({ taskId, error: err.message || '获取链接失败' })
-                )
-            )
-        )
-
-        for (const result of results) {
-            if (result.status === 'fulfilled') {
-                const value = result.value
-                // 类型守卫：判断是否包含 url 字段
-                if ('url' in value) {
-                    const { taskId, url, key } = value
-                    taskStore.updateTaskUrl(taskId, url, key, 0)
-                } else {
-                    taskStore.errorTask(value.taskId, value.error)
-                }
-            }
-            // 由于内部已用 .then 捕获错误，result.status 不可能为 'rejected'
+            // 异步获取链接
+            fetchAndUpdateTask(taskId, song.id, resolved.filename)
         }
 
         if (settingsStore.settings.jumpToTask) {
@@ -171,10 +230,11 @@ export function useDownloadActions() {
         const currentTask = taskStore.tasks.find((t) => t.id === taskId)
         if (!currentTask) return
 
+        // 重试时直接使用任务中保存的 filename 重新获取链接
         try {
             const { url, key } = await musicApi.fetchDownloadLink(
                 currentTask.songId,
-                currentTask.quality
+                currentTask.filename
             )
             taskStore.updateTaskUrl(taskId, url, key, currentTask.downloaded)
         } catch (error: any) {

@@ -11,12 +11,20 @@ export interface Settings {
     jumpToTask: boolean
 }
 
+/** 歌曲可用的单个品质项 */
+export interface QualityItem {
+    quality: string   // 品质标签，如 "128k", "FLAC", "Hi-Res", "臻品母带" 等
+    filename: string  // 对应下载文件名，如 "M800xxxx.mp3"
+}
+
 export interface SongInfo {
     id: string
     title: string
     artist: string
     album: string
     coverUrl: string
+    mediaMid: string
+    qualities: QualityItem[]
 }
 
 export interface TaskRecord {
@@ -26,7 +34,9 @@ export interface TaskRecord {
     artist: string
     album: string
     coverUrl: string
-    quality: Quality
+    mediaMid: string           // 用于后续可能的操作
+    filename: string           // 实际下载的文件名，重试时直接使用
+    quality: Quality           // 目标音质（用户期望的品质，实际可能因降级而不同）
     status: TaskStatus
     errorMsg?: string
     filePath?: string
