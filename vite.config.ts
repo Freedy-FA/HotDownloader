@@ -12,7 +12,7 @@ export default defineConfig({
       '@components': path.resolve(import.meta.dirname, './src/components'),
     },
     // 导入时省略的扩展名（默认已支持 .js, .ts, .jsx, .tsx, .json）
-    extensions: ['.js', '.ts', '.jsx', '.tsx', '.json'],
+    extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json', '.vue'],
   },
   // 防止 Vite 清除 Rust 显示的错误
   clearScreen: false,
