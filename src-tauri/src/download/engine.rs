@@ -39,7 +39,8 @@ impl DownloadEngine {
         }
     }
 
-    pub fn add_task(
+    /// 异步添加任务
+    pub async fn add_task(
         &self,
         task_id: String,
         url: String,
@@ -47,6 +48,9 @@ impl DownloadEngine {
         quality: String,
         key: String,
         file_size: u64,
+        song_title: String,
+        artist: String,
+        album: String,
     ) {
         let controller = TaskController {
             cancel_token: CancellationToken::new(),
@@ -64,101 +68,83 @@ impl DownloadEngine {
             file_size,
             downloaded_offset: 0,
             app_handle: self.app_handle.clone(),
-            // song_info 需要从某处传入，目前使用默认值；实际应该由前端传入
             song_info: super::task::SongInfo {
-                title: String::new(),
-                artist: String::new(),
-                album: String::new(),
+                title: song_title,
+                artist,
+                album,
             },
         };
 
-        // 如果 url 非空，说明可以直接放入 ready_tasks，但命令约定添加时 url 为空
-        // 这里统一放入 pending_tasks
-        let pending = self.pending_tasks.clone();
-        let controllers = self.active_controllers.clone();
-        let notify = self.scheduler_notify.clone();
-
-        tokio::spawn(async move {
-            controllers.lock().await.insert(task_id, controller);
-            pending.lock().await.push_back(ctx);
-            notify.notify_one();
-        });
-    }
-
-    pub fn update_task(&self, task_id: &str, url: String, key: String, offset: u64) {
-        let pending = self.pending_tasks.clone();
-        let ready = self.ready_tasks.clone();
-        let controllers = self.active_controllers.clone();
-        let notify = self.scheduler_notify.clone();
-        let tid = task_id.to_string();
-
-        tokio::spawn(async move {
-            // 从 pending_tasks 中取出并更新
-            let mut pending_queue = pending.lock().await;
-            if let Some(pos) = pending_queue.iter().position(|t| t.task_id == tid) {
-                let mut ctx = pending_queue.remove(pos).unwrap();
-                ctx.url = url;
-                ctx.key = key;
-                ctx.downloaded_offset = offset;
-                // 放入 ready_tasks
-                ready.lock().await.push_back(ctx);
-            }
-            // 通知该任务的 url_ready
-            if let Some(ctrl) = controllers.lock().await.get(&tid) {
-                ctrl.url_ready.notify_one();
-            }
-            // 唤醒调度器
-            notify.notify_one();
-        });
-    }
-
-    pub fn pause(&self, task_id: &str) {
-        let controllers = self.active_controllers.clone();
-        let tid = task_id.to_string();
-        tokio::spawn(async move {
-            if let Some(ctrl) = controllers.lock().await.get(&tid) {
-                ctrl.pause_flag.store(true, Ordering::SeqCst);
-            }
-        });
-    }
-
-    pub fn resume(&self, task_id: &str) {
-        let controllers = self.active_controllers.clone();
-        let tid = task_id.to_string();
-        tokio::spawn(async move {
-            if let Some(ctrl) = controllers.lock().await.get(&tid) {
-                ctrl.pause_flag.store(false, Ordering::SeqCst);
-                ctrl.resume_notify.notify_one();
-            }
-        });
-    }
-
-    pub fn cancel(&self, task_id: &str) {
-        let controllers = self.active_controllers.clone();
-        let pending = self.pending_tasks.clone();
-        let ready = self.ready_tasks.clone();
-        let tid = task_id.to_string();
-
-        tokio::spawn(async move {
-            // 触发取消令牌
-            if let Some(ctrl) = controllers.lock().await.remove(&tid) {
-                ctrl.cancel_token.cancel();
-            }
-            // 从队列中移除
-            pending.lock().await.retain(|t| t.task_id != tid);
-            ready.lock().await.retain(|t| t.task_id != tid);
-        });
-    }
-
-    pub fn set_concurrency(&self, max: u32) {
-        self.max_concurrent.store(max, Ordering::SeqCst);
-        // 可能现在可以启动新任务
+        self.active_controllers
+            .lock()
+            .await
+            .insert(task_id, controller);
+        self.pending_tasks.lock().await.push_back(ctx);
         self.scheduler_notify.notify_one();
     }
 
+    /// 异步更新任务 URL 并移入就绪队列
+    pub async fn update_task(&self, task_id: &str, url: String, key: String, offset: u64) {
+        let mut pending = self.pending_tasks.lock().await;
+        if let Some(pos) = pending.iter().position(|t| t.task_id == task_id) {
+            let mut ctx = pending.remove(pos).unwrap();
+            ctx.url = url;
+            ctx.key = key;
+            ctx.downloaded_offset = offset;
+            drop(pending); // 释放锁，避免死锁
+            self.ready_tasks.lock().await.push_back(ctx);
+        }
+
+        // 通知该任务的 url_ready（如果有）
+        if let Some(ctrl) = self.active_controllers.lock().await.get(task_id) {
+            ctrl.url_ready.notify_one();
+        }
+
+        self.scheduler_notify.notify_one();
+    }
+
+    /// 异步暂停任务
+    pub async fn pause(&self, task_id: &str) {
+        if let Some(ctrl) = self.active_controllers.lock().await.get(task_id) {
+            ctrl.pause_flag.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// 异步恢复任务
+    pub async fn resume(&self, task_id: &str) {
+        if let Some(ctrl) = self.active_controllers.lock().await.get(task_id) {
+            ctrl.pause_flag.store(false, Ordering::SeqCst);
+            ctrl.resume_notify.notify_one();
+        }
+    }
+
+    /// 异步取消任务
+    pub async fn cancel(&self, task_id: &str) {
+        // 取消令牌
+        if let Some(ctrl) = self.active_controllers.lock().await.remove(task_id) {
+            ctrl.cancel_token.cancel();
+        }
+        // 清理队列
+        self.pending_tasks
+            .lock()
+            .await
+            .retain(|t| t.task_id != task_id);
+        self.ready_tasks
+            .lock()
+            .await
+            .retain(|t| t.task_id != task_id);
+    }
+
+    /// 设置并发数（同步，无需 Tokio 上下文）
+    pub fn set_concurrency(&self, max: u32) {
+        self.max_concurrent.store(max, Ordering::SeqCst);
+        self.scheduler_notify.notify_one();
+    }
+
+    /// 调度循环（在后台 Tokio 任务中运行）
     pub async fn run_scheduler(&self) {
         loop {
-            // 尝试启动尽可能多的就绪任务
+            // 启动尽可能多的就绪任务
             while let Some(ctx) = {
                 let mut ready = self.ready_tasks.lock().await;
                 ready.pop_front()
@@ -166,12 +152,10 @@ impl DownloadEngine {
                 let current = self.active_downloads.load(Ordering::SeqCst);
                 let max = self.max_concurrent.load(Ordering::SeqCst);
                 if current >= max {
-                    // 放回队列头部，等待下次通知
                     self.ready_tasks.lock().await.push_front(ctx);
                     break;
                 }
 
-                // 获取对应的控制器（必须存在，否则跳过）
                 let ctrl = {
                     let controllers = self.active_controllers.lock().await;
                     controllers.get(&ctx.task_id).map(|c| TaskController {
@@ -182,27 +166,21 @@ impl DownloadEngine {
                     })
                 };
 
-                match ctrl {
-                    Some(ctrl) => {
-                        self.active_downloads.fetch_add(1, Ordering::SeqCst);
-                        let active_downloads = self.active_downloads.clone();
-                        let scheduler_notify = self.scheduler_notify.clone();
-                        let app_handle = self.app_handle.clone();
+                if let Some(ctrl) = ctrl {
+                    self.active_downloads.fetch_add(1, Ordering::SeqCst);
+                    let active_downloads = self.active_downloads.clone();
+                    let scheduler_notify = self.scheduler_notify.clone();
+                    let app_handle = self.app_handle.clone();
 
-                        tokio::spawn(async move {
-                            download_task(ctx, ctrl, app_handle).await;
-                            active_downloads.fetch_sub(1, Ordering::SeqCst);
-                            scheduler_notify.notify_one();
-                        });
-                    }
-                    None => {
-                        // 控制器已被移除，忽略该任务
-                        continue;
-                    }
+                    tokio::spawn(async move {
+                        download_task(ctx, ctrl, app_handle).await;
+                        active_downloads.fetch_sub(1, Ordering::SeqCst);
+                        scheduler_notify.notify_one();
+                    });
                 }
+                // 如果 ctrl 不存在，跳过该任务（可能已被取消）
             }
 
-            // 等待新任务加入或某个下载完成
             self.scheduler_notify.notified().await;
         }
     }

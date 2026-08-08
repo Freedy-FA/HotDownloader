@@ -1,11 +1,9 @@
 use tauri::AppHandle;
-use tauri::Manager;
+use tauri_plugin_store::StoreExt;
 
-/// 从 Tauri Store 加载字符串数据
+/// 从默认 data.json 存储加载字符串
 pub fn load_string(app: &AppHandle, key: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let store = app
-        .try_state::<tauri_plugin_store::Store<tauri::Wry>>()
-        .ok_or("Store not initialized")?;
+    let store = app.store("data.json")?;
     let value = store
         .get(key.to_string())
         .and_then(|v| v.as_str().map(|s| s.to_string()))
@@ -13,15 +11,13 @@ pub fn load_string(app: &AppHandle, key: &str) -> Result<String, Box<dyn std::er
     Ok(value)
 }
 
-/// 保存字符串数据到 Tauri Store
+/// 保存字符串到默认 data.json 存储
 pub fn save_string(
     app: &AppHandle,
     key: &str,
     value: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let store = app
-        .try_state::<tauri_plugin_store::Store<tauri::Wry>>()
-        .ok_or("Store not initialized")?;
+    let store = app.store("data.json")?;
     store.set(
         key.to_string(),
         serde_json::Value::String(value.to_string()),

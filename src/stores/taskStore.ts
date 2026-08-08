@@ -64,6 +64,9 @@ export const useTaskStore = defineStore('tasks', () => {
             quality: task.quality,
             key: '',
             fileSize: task.fileSize,
+            songTitle: task.songTitle,
+            artist: task.artist,
+            album: task.album,
         }).catch(console.error)
     }
 

@@ -13,7 +13,7 @@ pub fn save_tasks(app: AppHandle, tasks_json: String) -> Result<(), String> {
 }
 
 #[command]
-pub fn add_download_task(
+pub async fn add_download_task(
     app: AppHandle,
     task_id: String,
     url: String,
@@ -21,43 +21,48 @@ pub fn add_download_task(
     quality: String,
     key: String,
     file_size: u64,
+    song_title: String,
+    artist: String,
+    album: String,
 ) -> Result<(), String> {
     let engine = app.state::<DownloadEngine>();
-    engine.add_task(task_id, url, save_path, quality, key, file_size);
+    engine
+        .add_task(task_id, url, save_path, quality, key, file_size, song_title, artist, album)
+        .await;
     Ok(())
 }
 
 #[command]
-pub fn update_task_url(
+pub async fn update_task_url(
     app: AppHandle,
     task_id: String,
     url: String,
     key: String,
     offset: u64,
 ) -> Result<(), String> {
-    let engine = app.state::<DownloadEngine>();
-    engine.update_task(&task_id, url, key, offset);
+    let engine = app.state::<DownloadEngine>().clone();
+    engine.update_task(&task_id, url, key, offset).await;
     Ok(())
 }
 
 #[command]
-pub fn pause_task(app: AppHandle, task_id: String) -> Result<(), String> {
-    let engine = app.state::<DownloadEngine>();
-    engine.pause(&task_id);
+pub async fn pause_task(app: AppHandle, task_id: String) -> Result<(), String> {
+    let engine = app.state::<DownloadEngine>().clone();
+    engine.pause(&task_id).await;
     Ok(())
 }
 
 #[command]
-pub fn resume_task(app: AppHandle, task_id: String) -> Result<(), String> {
-    let engine = app.state::<DownloadEngine>();
-    engine.resume(&task_id);
+pub async fn resume_task(app: AppHandle, task_id: String) -> Result<(), String> {
+    let engine = app.state::<DownloadEngine>().clone();
+    engine.resume(&task_id).await;
     Ok(())
 }
 
 #[command]
-pub fn cancel_task(app: AppHandle, task_id: String) -> Result<(), String> {
-    let engine = app.state::<DownloadEngine>();
-    engine.cancel(&task_id);
+pub async fn cancel_task(app: AppHandle, task_id: String) -> Result<(), String> {
+    let engine = app.state::<DownloadEngine>().clone();
+    engine.cancel(&task_id).await;
     Ok(())
 }
 
