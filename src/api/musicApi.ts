@@ -1,8 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { SongInfo } from '../types'
 
-export async function searchSongs(keyword: string, page: number = 1): Promise<SongInfo[]> {
-    const json = await invoke<string>('search_songs', { keyword, page })
+export async function searchSongs(
+    keyword: string,
+    page: number = 1,
+    limit: number = 20
+): Promise<SongInfo[]> {
+    const json = await invoke<string>('search_songs', { keyword, page, limit })
     return JSON.parse(json) as SongInfo[]
 }
 

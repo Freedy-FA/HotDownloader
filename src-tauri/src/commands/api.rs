@@ -1,32 +1,64 @@
-use tauri::command;
 use serde_json::{json, Value};
+use tauri::command;
 
 /// 搜索歌曲，返回 JSON 数组字符串（扩展 SongInfo，增加 mediaMid 和 qualities）
+/// https://github.com/lyswhut/lx-music-desktop/blob/9c364b482e5621a1d38b50e8610d2fb974457e6e/src/renderer/utils/musicSdk/tx/musicSearch.js#L13
 #[command]
-pub async fn search_songs(keyword: String, page: u32) -> Result<String, String> {
+pub async fn search_songs(keyword: String, page: u32, limit: u32) -> Result<String, String> {
     let client = reqwest::Client::new();
+
+    let searchid = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        .to_string();
 
     let request_body = json!({
         "comm": {
-            "ct": 11,
-            "cv": "1003006",
-            "v": "1003006",
+            "ct": "11",
+            "cv": "14090508",
+            "v": "14090508",
+            "tmeAppID": "qqmusic",
+            "phonetype": "EBG-AN10",
+            "deviceScore": "553.47",
+            "devicelevel": "50",
+            "newdevicelevel": "20",
+            "rom": "HuaWei/EMOTION/EmotionUI_14.2.0",
             "os_ver": "12",
-            "phonetype": "0",
-            "devicelevel": "31",
-            "tmeAppID": "qqmusiclight",
-            "nettype": "NETWORK_WIFI"
+            "OpenUDID": "0",
+            "OpenUDID2": "0",
+            "QIMEI36": "0",
+            "udid": "0",
+            "chid": "0",
+            "aid": "0",
+            "oaid": "0",
+            "taid": "0",
+            "tid": "0",
+            "wid": "0",
+            "uid": "0",
+            "sid": "0",
+            "modeSwitch": "6",
+            "teenMode": "0",
+            "ui_mode": "2",
+            "nettype": "1020",
+            "v4ip": ""
         },
         "req": {
             "module": "music.search.SearchCgiService",
-            "method": "DoSearchForQQMusicLite",
+            "method": "DoSearchForQQMusicMobile",
             "param": {
-                "query": keyword,
                 "search_type": 0,
-                "num_per_page": 20,   // 默认每页20条，可根据需要调整
+                "searchid": searchid,
+                "query": keyword,
                 "page_num": page,
+                "num_per_page": limit,   // 使用参数控制每页数量
+                "highlight": 0,
                 "nqc_flag": 0,
-                "grp": 1
+                "multi_zhida": 0,
+                "cat": 2,
+                "grp": 1,
+                "sin": 0,
+                "sem": 0
             }
         }
     });
@@ -41,7 +73,10 @@ pub async fn search_songs(keyword: String, page: u32) -> Result<String, String> 
         .await
         .map_err(|e| format!("网络错误: {}", e))?;
 
-    let text = resp.text().await.map_err(|e| format!("读取响应失败: {}", e))?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取响应失败: {}", e))?;
     let data: Value = serde_json::from_str(&text).map_err(|e| format!("解析响应失败: {}", e))?;
 
     // 检查整体状态
@@ -154,16 +189,29 @@ fn build_qualities(file: &Value, vs: &Value) -> Vec<Value> {
 
     for (label, prefix, suffix) in &standard {
         // 用 size_ 字段判断是否存在
-        let size_key = format!("size_{}", label.to_lowercase().replace("-", "").replace(' ', ""));
-        let size_key = if size_key == "size_320k" { "size_320mp3".to_string() }
-                      else if size_key == "size_128k" { "size_128mp3".to_string() }
-                      else if size_key == "size_ape" { "size_ape".to_string() }
-                      else if size_key == "size_flac" { "size_flac".to_string() }
-                      else if size_key == "size_hi-res" { "size_hires".to_string() }
-                      else if size_key == "size_48k" { "size_48aac".to_string() }
-                      else if size_key == "size_96k" { "size_96aac".to_string() }
-                      else if size_key == "size_192k" { "size_192aac".to_string() }
-                      else { size_key };
+        let size_key = format!(
+            "size_{}",
+            label.to_lowercase().replace("-", "").replace(' ', "")
+        );
+        let size_key = if size_key == "size_320k" {
+            "size_320mp3".to_string()
+        } else if size_key == "size_128k" {
+            "size_128mp3".to_string()
+        } else if size_key == "size_ape" {
+            "size_ape".to_string()
+        } else if size_key == "size_flac" {
+            "size_flac".to_string()
+        } else if size_key == "size_hi-res" {
+            "size_hires".to_string()
+        } else if size_key == "size_48k" {
+            "size_48aac".to_string()
+        } else if size_key == "size_96k" {
+            "size_96aac".to_string()
+        } else if size_key == "size_192k" {
+            "size_192aac".to_string()
+        } else {
+            size_key
+        };
 
         let size = file[&size_key].as_u64().unwrap_or(0);
         if size > 0 {
@@ -210,6 +258,7 @@ fn build_qualities(file: &Value, vs: &Value) -> Vec<Value> {
 /// 获取下载链接与解密密钥
 /// 参数：song_id 为歌曲 mid，filename 为品质文件名（如 M800001abc.mp3）
 /// 返回 JSON: { "url": "完整下载链接", "key": "ekey" }
+/// https://github.com/chrisdong/FileHub/blob/e1d752e1f29f877b7c895ae5aaff32a179fad051/root/importURLs/lxmusic/HeiMusic%E8%81%9A%E5%90%88%E6%BA%90_v1.1.5.js#L287
 #[command]
 pub async fn fetch_download_link(song_id: String, filename: String) -> Result<String, String> {
     let client = reqwest::Client::new();
@@ -217,7 +266,10 @@ pub async fn fetch_download_link(song_id: String, filename: String) -> Result<St
     let request_body = json!({
         "comm": {
             "ct": "19",
-            "cv": "2111"
+            "cv": "0",
+            "guid": "",
+            "tmeAppID": "qqmusic",
+            "qq": "0"
         },
         "music.vkey.GetEVkey.CgiGetHotVkey": {
             "module": "music.vkey.GetEVkey",
@@ -250,20 +302,27 @@ pub async fn fetch_download_link(song_id: String, filename: String) -> Result<St
         .await
         .map_err(|e| format!("网络错误: {}", e))?;
 
-    let text = resp.text().await.map_err(|e| format!("读取响应失败: {}", e))?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取响应失败: {}", e))?;
     let data: Value = serde_json::from_str(&text).map_err(|e| format!("解析响应失败: {}", e))?;
 
     // 提取 purl
     let vkey_resp = &data["music.vkey.GetEVkey.CgiGetHotVkey"];
     let urls = vkey_resp["data"]["urls"].as_array().ok_or("缺少 urls")?;
-    let purl = urls.get(0)
+    let purl = urls
+        .get(0)
         .and_then(|u| u["purl"].as_str())
         .ok_or("未获取到下载链接")?;
 
     // 提取 ekey
     let ekey_resp = &data["music.vkey.GetEVkey.GetEkey"];
-    let ekeyinfo = ekey_resp["data"]["ekeyinfo"].as_array().ok_or("缺少 ekeyinfo")?;
-    let ekey = ekeyinfo.get(0)
+    let ekeyinfo = ekey_resp["data"]["ekeyinfo"]
+        .as_array()
+        .ok_or("缺少 ekeyinfo")?;
+    let ekey = ekeyinfo
+        .get(0)
         .and_then(|e| e["ekey"].as_str())
         .unwrap_or("");
 
@@ -278,7 +337,8 @@ pub async fn fetch_download_link(song_id: String, filename: String) -> Result<St
     Ok(result.to_string())
 }
 
-/// 获取热搜关键词列表
+/// 获取热搜关键词列表，返回 JSON 数组字符串
+/// https://github.com/lyswhut/lx-music-desktop/blob/9c364b482e5621a1d38b50e8610d2fb974457e6e/src/renderer/utils/musicSdk/tx/hotSearch.js#L15
 #[command]
 pub async fn fetch_hot_keywords() -> Result<String, String> {
     let client = reqwest::Client::new();
@@ -312,12 +372,16 @@ pub async fn fetch_hot_keywords() -> Result<String, String> {
         .post("https://u.y.qq.com/cgi-bin/musicu.fcg")
         .header("User-Agent", "HotDownloader/1.0")
         .header("Content-Type", "application/json")
+        .header("Referer", "https://y.qq.com/portal/player.html")
         .json(&request_body)
         .send()
         .await
         .map_err(|e| format!("网络错误: {}", e))?;
 
-    let text = resp.text().await.map_err(|e| format!("读取响应失败: {}", e))?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取响应失败: {}", e))?;
     let data: Value = serde_json::from_str(&text).map_err(|e| format!("解析响应失败: {}", e))?;
 
     // 热搜数据在独立的 "hotkey" 字段中
