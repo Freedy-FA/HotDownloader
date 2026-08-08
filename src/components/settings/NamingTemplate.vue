@@ -27,10 +27,11 @@ const settingsStore = useSettingsStore()
 }
 
 code {
-    background: var(--n-border-color, #f0f0f0);
+    background: rgba(127, 127, 127, 0.15);
     padding: 1px 4px;
     border-radius: 3px;
     font-family: monospace;
     font-size: 12px;
+    color: inherit;
 }
 </style>

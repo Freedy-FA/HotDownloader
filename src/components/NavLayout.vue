@@ -6,7 +6,7 @@
         </aside>
 
         <!-- 内容区域 -->
-        <main class="main-content">
+        <main class="main-content" :class="{ 'has-bottom-nav': isNarrow }">
             <router-view v-slot="{ Component }">
                 <keep-alive>
                     <component :is="Component" />
@@ -14,9 +14,12 @@
             </router-view>
         </main>
 
-        <!-- 窄屏底部水平导航 -->
+        <!-- 窄屏底部水平导航（固定底部，永远居中） -->
         <footer v-if="isNarrow" class="bottom-nav">
-            <n-menu :value="currentRoute" :options="menuOptions" mode="horizontal" @update:value="handleMenuClick" />
+            <div class="bottom-nav-inner">
+                <n-menu :value="currentRoute" :options="menuOptions" mode="horizontal"
+                    @update:value="handleMenuClick" />
+            </div>
         </footer>
     </div>
 </template>
@@ -58,15 +61,15 @@ const currentRoute = computed(() => route.path)
 const menuOptions: MenuOption[] = [
     {
         label: '搜索',
-        key: '/search',
+        key: '/search'
     },
     {
         label: '任务',
-        key: '/task',
+        key: '/task'
     },
     {
         label: '设置',
-        key: '/settings',
+        key: '/settings'
     },
 ]
 
@@ -78,6 +81,7 @@ function handleMenuClick(key: string) {
 </script>
 
 <style scoped>
+/* 布局整体 */
 .nav-layout {
     display: flex;
     height: 100%;
@@ -87,23 +91,54 @@ function handleMenuClick(key: string) {
     flex-direction: column;
 }
 
+/* 侧边栏：使用自定义背景变量 */
 .sidebar {
     width: 160px;
     flex-shrink: 0;
-    border-right: 1px solid var(--n-border-color, #e0e0e0);
+    border-right: 1px solid var(--border-color);
     padding: 12px 0;
+    background-color: var(--bg-sidebar);
 }
 
+/* 主内容区背景 */
 .main-content {
     flex: 1;
     overflow-y: auto;
     padding: 16px;
+    background-color: var(--bg-content);
 }
 
+.main-content.has-bottom-nav {
+    padding-bottom: 60px;
+}
+
+/* 底部导航：使用自定义背景变量 */
 .bottom-nav {
-    border-top: 1px solid var(--n-border-color, #e0e0e0);
-    padding: 4px 0;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    height: 56px;
+    border-top: 1px solid var(--border-color);
+    background-color: var(--bg-bottom);
+}
+
+/* 居中容器 */
+.bottom-nav-inner {
+    width: 100%;
+    height: 100%;
     display: flex;
     justify-content: center;
+    align-items: center;
+}
+
+/* 穿透样式强制菜单项居中 */
+.bottom-nav-inner :deep(.n-menu) {
+    justify-content: center;
+}
+
+.bottom-nav-inner :deep(.n-menu .n-menu-item) {
+    flex: none;
 }
 </style>

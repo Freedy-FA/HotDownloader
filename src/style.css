@@ -18,3 +18,28 @@ body {
 #app {
   height: 100%;
 }
+
+/* 浅色模式（默认） */
+:root {
+  --bg-body: #fafafc;
+  --bg-sidebar: #ffffff;
+  --bg-bottom: #ffffff;
+  --bg-content: #fafafc;
+  --border-color: #e0e0e0;
+}
+
+/* 深色模式 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-body: #101014;
+    --bg-sidebar: #1e1e24;
+    --bg-bottom: #1e1e24;
+    --bg-content: #101014;
+    --border-color: #333;
+  }
+}
+
+/* 应用背景到 body，确保滚动背景不露白 */
+body {
+  background-color: var(--bg-body);
+}
