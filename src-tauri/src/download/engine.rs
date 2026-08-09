@@ -50,6 +50,7 @@ impl DownloadEngine {
         url: String,
         save_path: String,
         quality: String,
+        filename: String,   // 新增参数
         key: String,
         file_size: u64,
         song_title: String,
@@ -69,6 +70,7 @@ impl DownloadEngine {
             url,
             save_path,
             quality,
+            quality_filename: filename,   // 存入上下文
             key,
             file_size,
             downloaded_offset: 0,

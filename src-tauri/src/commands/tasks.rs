@@ -19,6 +19,7 @@ pub async fn add_download_task(
     url: String,
     save_path: String,
     quality: String,
+    filename: String,   // 品质文件名
     key: String,
     file_size: u64,
     song_title: String,
@@ -27,7 +28,7 @@ pub async fn add_download_task(
 ) -> Result<(), String> {
     let engine = app.state::<DownloadEngine>();
     engine
-        .add_task(task_id, url, save_path, quality, key, file_size, song_title, artist, album)
+        .add_task(task_id, url, save_path, quality, filename, key, file_size, song_title, artist, album)
         .await;
     Ok(())
 }

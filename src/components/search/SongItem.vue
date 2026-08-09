@@ -5,6 +5,15 @@
         <div class="info">
             <div class="title">{{ song.title }}</div>
             <div class="subtitle">{{ song.artist }} · {{ song.album }}</div>
+            <div class="quality-tags">
+                <n-tag v-for="q in song.qualities.slice(0, 4)" :key="q.quality" size="tiny" :bordered="false"
+                    type="info">
+                    {{ q.quality }}
+                </n-tag>
+                <n-tag v-if="song.qualities.length > 4" size="tiny" :bordered="false" type="info">
+                    +{{ song.qualities.length - 4 }}
+                </n-tag>
+            </div>
         </div>
         <n-button size="small" @click="$emit('download', song)">
             下载
@@ -13,7 +22,7 @@
 </template>
 
 <script setup lang="ts">
-import { NCheckbox, NButton } from 'naive-ui'
+import { NCheckbox, NButton, NTag } from 'naive-ui'
 import type { SongInfo } from '../../types'
 
 defineProps<{
@@ -63,5 +72,12 @@ defineEmits<{
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.quality-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
 }
 </style>

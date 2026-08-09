@@ -62,6 +62,7 @@ export const useTaskStore = defineStore('tasks', () => {
             url: '',
             savePath: '',
             quality: task.quality,
+            filename: task.filename,   // 传递品质文件名
             key: '',
             fileSize: task.fileSize,
             songTitle: task.songTitle,
@@ -123,12 +124,11 @@ export const useTaskStore = defineStore('tasks', () => {
         if (task.retryCount > 3) {
             const settingsStore = useSettingsStore()
             if (settingsStore.settings.autoDowngrade) {
-                const currentIdx = QUALITY_DOWNGRADE_ORDER.indexOf(task.quality as any)
+                const currentIdx = QUALITY_DOWNGRADE_ORDER.indexOf(task.quality)
                 if (currentIdx >= 0 && currentIdx < QUALITY_DOWNGRADE_ORDER.length - 1) {
-                    const newQuality = QUALITY_DOWNGRADE_ORDER[currentIdx + 1]
-                    task.quality = newQuality as any
+                    task.quality = QUALITY_DOWNGRADE_ORDER[currentIdx + 1]
                     task.retryCount = 0
-                    task.errorMsg = `自动降级至 ${newQuality}`
+                    task.errorMsg = `自动降级至 ${task.quality}`
                     task.downloaded = 0 // 文件不同，必须重新下载
                 } else {
                     task.errorMsg = '已无更低音质可降级'

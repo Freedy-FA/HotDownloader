@@ -172,82 +172,65 @@ fn build_qualities(file: &Value, vs: &Value) -> Vec<Value> {
     let media_mid = file["media_mid"].as_str().unwrap_or("");
     let mut list = Vec::new();
 
-    // 标准品质映射 (品质标签, 前缀, 后缀)
-    let standard = [
-        ("试听", "RS02", ".mp3"),
-        ("48k", "C200", ".m4a"),
-        ("96k", "C400", ".m4a"),
-        ("192k", "C600", ".m4a"),
-        ("96k_ogg", "O4M0", ".mgg"),
-        ("192k_ogg", "O6M0", ".mgg"),
-        ("128k", "M500", ".mp3"),
-        ("320k", "M800", ".mp3"),
-        ("APE", "A000", ".ape"),
-        ("FLAC", "F0M0", ".mflac"),
-        ("Hi-Res", "RSM1", ".mflac"),
+    // 标准品质，按顺序定义 (前端标签, 文件前缀, 后缀, 文件大小字段名)
+    let standard_qualities: Vec<(&str, &str, &str, &str)> = vec![
+        ("48kacc",   "C200", ".m4a",   "size_48aac"),
+        ("96kacc",   "C400", ".m4a",   "size_96aac"),
+        ("192kacc",  "C600", ".m4a",   "size_192aac"),
+        ("96kogg",   "O4M0", ".mgg",   "size_96k_ogg"),
+        ("192kogg",  "O6M0", ".mgg",   "size_192k_ogg"),
+        ("128kmp3",  "M500", ".mp3",   "size_128mp3"),
+        ("320kmp3",  "M800", ".mp3",   "size_320mp3"),
+        ("ape",      "A000", ".ape",   "size_ape"),
+        ("flac",     "F0M0", ".mflac", "size_flac"),
+        ("hires",    "RSM1", ".mflac", "size_hires"),
     ];
 
-    for (label, prefix, suffix) in &standard {
-        // 用 size_ 字段判断是否存在
-        let size_key = format!(
-            "size_{}",
-            label.to_lowercase().replace("-", "").replace(' ', "")
-        );
-        let size_key = if size_key == "size_320k" {
-            "size_320mp3".to_string()
-        } else if size_key == "size_128k" {
-            "size_128mp3".to_string()
-        } else if size_key == "size_ape" {
-            "size_ape".to_string()
-        } else if size_key == "size_flac" {
-            "size_flac".to_string()
-        } else if size_key == "size_hi-res" {
-            "size_hires".to_string()
-        } else if size_key == "size_48k" {
-            "size_48aac".to_string()
-        } else if size_key == "size_96k" {
-            "size_96aac".to_string()
-        } else if size_key == "size_192k" {
-            "size_192aac".to_string()
-        } else {
-            size_key
-        };
-
-        let size = file[&size_key].as_u64().unwrap_or(0);
+    for (label, prefix, suffix, size_key) in &standard_qualities {
+        let size = file[*size_key].as_u64().unwrap_or(0);
         if size > 0 {
             list.push(json!({
                 "quality": label,
-                "filename": format!("{}{}{}", prefix, media_mid, suffix)
+                "filename": format!("{}{}{}", prefix, media_mid, suffix),
+                "size": size
             }));
         }
     }
 
-    // 特殊品质：杜比全景声 / 臻品全景声 / 臻品母带
+    // 特殊品质：杜比全景声 → 臻品全景声 → 臻品母带（按此顺序）
     let size_new = file["size_new"].as_array();
     let vs_arr = vs.as_array();
     if let (Some(size_new), Some(vs_arr)) = (size_new, vs_arr) {
         let vs3 = vs_arr.get(3).and_then(|v| v.as_str()).unwrap_or("");
         let vs4 = vs_arr.get(4).and_then(|v| v.as_str()).unwrap_or("");
 
-        // 臻品母带 (size_new[0] + vs[3])
-        if size_new.get(0).and_then(|v| v.as_u64()).unwrap_or(0) > 0 && !vs3.is_empty() {
-            list.push(json!({
-                "quality": "臻品母带",
-                "filename": format!("AIM0{}.mflac", vs3)
-            }));
-        }
         // 杜比全景声 (size_new[1] + vs[4])
-        if size_new.get(1).and_then(|v| v.as_u64()).unwrap_or(0) > 0 && !vs4.is_empty() {
+        let size_dolby = size_new.get(1).and_then(|v| v.as_u64()).unwrap_or(0);
+        if size_dolby > 0 && !vs4.is_empty() {
             list.push(json!({
                 "quality": "杜比全景声",
-                "filename": format!("Q0M0{}.mflac", vs4)
+                "filename": format!("Q0M0{}.mflac", vs4),
+                "size": size_dolby
             }));
         }
+
         // 臻品全景声 (size_new[2] + vs[4])
-        if size_new.get(2).and_then(|v| v.as_u64()).unwrap_or(0) > 0 && !vs4.is_empty() {
+        let size_panorama = size_new.get(2).and_then(|v| v.as_u64()).unwrap_or(0);
+        if size_panorama > 0 && !vs4.is_empty() {
             list.push(json!({
                 "quality": "臻品全景声",
-                "filename": format!("Q0M1{}.mflac", vs4)
+                "filename": format!("Q0M1{}.mflac", vs4),
+                "size": size_panorama
+            }));
+        }
+
+        // 臻品母带 (size_new[0] + vs[3])
+        let size_master = size_new.get(0).and_then(|v| v.as_u64()).unwrap_or(0);
+        if size_master > 0 && !vs3.is_empty() {
+            list.push(json!({
+                "quality": "臻品母带",
+                "filename": format!("AIM0{}.mflac", vs3),
+                "size": size_master
             }));
         }
     }

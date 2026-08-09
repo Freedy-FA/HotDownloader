@@ -1,4 +1,24 @@
-export type Quality = 'Hi-Res' | 'FLAC' | '320k' | '192k' | '128k' | 'ask'
+// 所有品质标签，按从低到高排序
+export const ALL_QUALITY_ORDER: string[] = [
+    '48kacc',
+    '96kacc',
+    '192kacc',
+    '96kogg',
+    '192kogg',
+    '128kmp3',
+    '320kmp3',
+    'ape',
+    'flac',
+    'hires',
+    '杜比全景声',
+    '臻品全景声',
+    '臻品母带',
+]
+
+/** 降级顺序：从高到低 */
+export const QUALITY_DOWNGRADE_ORDER: string[] = [...ALL_QUALITY_ORDER].reverse()
+
+export type Quality = string  // 不再限制字面量，兼容所有后端标签
 
 export type TaskStatus = 'waiting' | 'downloading' | 'paused' | 'completed' | 'error'
 
@@ -13,8 +33,9 @@ export interface Settings {
 
 /** 歌曲可用的单个品质项 */
 export interface QualityItem {
-    quality: string   // 品质标签，如 "128k", "FLAC", "Hi-Res", "臻品母带" 等
+    quality: string   // 品质标签，如 "128kmp3", "flac", "臻品母带" 等
     filename: string  // 对应下载文件名，如 "M800xxxx.mp3"
+    size: number      // 文件字节大小
 }
 
 export interface SongInfo {
@@ -35,8 +56,8 @@ export interface TaskRecord {
     album: string
     coverUrl: string
     mediaMid: string           // 用于后续可能的操作
-    filename: string           // 实际下载的文件名，重试时直接使用
-    quality: Quality           // 目标音质（用户期望的品质，实际可能因降级而不同）
+    filename: string           // 实际下载的品质文件名
+    quality: Quality           // 实际选择的品质标签
     status: TaskStatus
     errorMsg?: string
     filePath?: string
@@ -68,16 +89,8 @@ export interface DownloadLinkExpiredPayload {
     current_offset: number
 }
 
-export const QUALITY_DOWNGRADE_ORDER: Quality[] = [
-    'Hi-Res',
-    'FLAC',
-    '320k',
-    '192k',
-    '128k',
-]
-
 export const DEFAULT_SETTINGS: Settings = {
-    defaultQuality: '320k',
+    defaultQuality: '128kmp3',
     autoDowngrade: true,
     downloadDir: '',
     namingTemplate: '{song} - {artist}',

@@ -33,6 +33,7 @@ pub struct TaskContext {
     pub downloaded_offset: u64,
     pub app_handle: AppHandle,
     pub song_info: SongInfo,
+    pub quality_filename: String,
 }
 
 /// 实际执行下载的函数
@@ -50,7 +51,12 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             let (dir, template) = get_download_settings(&app_handle).await;
             let song = &ctx.song_info;
             let fname = filename::build_filename(&template, song);
-            let full_path = Path::new(&dir).join(format!("{}.flac", fname));
+            // 从品质文件名中提取扩展名，若无法提取则回退为 "flac"
+            let ext = Path::new(&ctx.quality_filename)
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("flac");
+            let full_path = Path::new(&dir).join(format!("{}.{}", fname, ext));
             full_path.to_string_lossy().to_string()
         }
     };
