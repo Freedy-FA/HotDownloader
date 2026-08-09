@@ -32,6 +32,7 @@ const columns: DataTableColumn<TaskRecord>[] = [
         render(row: TaskRecord) {
             return h('div', { class: 'song-info' }, [
                 h('span', { class: 'song-title' }, row.songTitle || '未知歌曲'),
+                h('span', { class: 'song-separator' }, ' - '),
                 h('span', { class: 'song-artist' }, row.artist || '未知歌手'),
             ])
         },
@@ -100,7 +101,9 @@ const columns: DataTableColumn<TaskRecord>[] = [
 <style scoped>
 .song-info {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: baseline;
+    flex-wrap: wrap;
 }
 
 .song-title {
@@ -110,8 +113,17 @@ const columns: DataTableColumn<TaskRecord>[] = [
     text-overflow: ellipsis;
 }
 
+.song-separator {
+    margin: 0 4px;
+    color: var(--n-text-color-3);
+    font-size: 12px;
+}
+
 .song-artist {
     font-size: 12px;
     color: var(--n-text-color-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 </style>
