@@ -1,7 +1,9 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
+use log;
 use tauri::AppHandle;
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
@@ -13,6 +15,8 @@ pub struct TaskController {
     pub pause_flag: Arc<AtomicBool>,
     pub resume_notify: Arc<Notify>,
     pub url_ready: Arc<Notify>,
+    /// 取消时是否需要删除文件
+    pub delete_file_on_cancel: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
@@ -39,7 +43,7 @@ impl DownloadEngine {
         }
     }
 
-    /// 异步添加任务
+    /// 异步添加任务，同时预计算最终保存路径
     pub async fn add_task(
         &self,
         task_id: String,
@@ -57,6 +61,7 @@ impl DownloadEngine {
             pause_flag: Arc::new(AtomicBool::new(false)),
             resume_notify: Arc::new(Notify::new()),
             url_ready: Arc::new(Notify::new()),
+            delete_file_on_cancel: Arc::new(AtomicBool::new(false)),
         };
 
         let ctx = TaskContext {
@@ -118,12 +123,18 @@ impl DownloadEngine {
         }
     }
 
-    /// 异步取消任务
-    pub async fn cancel(&self, task_id: &str) {
-        // 取消令牌
-        if let Some(ctrl) = self.active_controllers.lock().await.remove(task_id) {
+    /// 取消任务：设置取消标志，同时标记是否需要删除文件
+    pub async fn cancel(&self, task_id: &str, delete_file: bool) {
+        log::info!("取消任务 {} (delete_file={})", task_id, delete_file);
+        if let Some(ctrl) = self.active_controllers.lock().await.get(task_id) {
             ctrl.cancel_token.cancel();
+            // 将删除意图传递给下载线程
+            ctrl.delete_file_on_cancel.store(delete_file, Ordering::SeqCst);
+            // 如果任务处于暂停等待状态，需要唤醒它以便退出循环
+            ctrl.resume_notify.notify_one();
+            ctrl.url_ready.notify_one();
         }
+
         // 清理队列
         self.pending_tasks
             .lock()
@@ -133,6 +144,8 @@ impl DownloadEngine {
             .lock()
             .await
             .retain(|t| t.task_id != task_id);
+
+        // 注意：不再在此处删除文件，改为 download_task 完成后自行处理
     }
 
     /// 设置并发数（同步，无需 Tokio 上下文）
@@ -163,6 +176,7 @@ impl DownloadEngine {
                         pause_flag: c.pause_flag.clone(),
                         resume_notify: c.resume_notify.clone(),
                         url_ready: c.url_ready.clone(),
+                        delete_file_on_cancel: c.delete_file_on_cancel.clone(),
                     })
                 };
 

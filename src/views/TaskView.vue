@@ -46,16 +46,19 @@ const tabCounts = computed(() => {
 })
 
 const filteredTasks = computed(() => {
-    if (activeTab.value === 'all') return taskStore.tasks
-    return taskStore.tasks.filter(
-        (t) => t.status === (activeTab.value as TaskStatus)
-    )
+    const all = taskStore.tasks.filter((t) => {
+        // 显式读取进度相关字段，建立响应式依赖
+        void t.downloaded;
+        void t.fileSize;
+        return activeTab.value === 'all' || t.status === activeTab.value;
+    });
+    return all;
 })
 
-async function handleAction(action: string, taskId: string) {
+async function handleAction(action: string, taskId: string, extra?: any) {
     switch (action) {
         case 'cancel':
-            taskStore.cancelTask(taskId)
+            taskStore.cancelTask(taskId, extra?.deleteFile === true)
             break
         case 'pause':
             taskStore.pauseTask(taskId)
@@ -95,7 +98,8 @@ async function handleBatchClear() {
             task.status === 'downloading' ||
             task.status === 'paused'
         ) {
-            taskStore.cancelTask(taskId)
+            // 批量清除暂时默认不删除文件，可通过扩展实现
+            taskStore.cancelTask(taskId, false)
         } else {
             taskStore.removeTask(taskId)
         }

@@ -70,12 +70,7 @@ export const useTaskStore = defineStore('tasks', () => {
         }).catch(console.error)
     }
 
-    function updateTaskUrl(
-        taskId: string,
-        url: string,
-        key: string,
-        offset: number
-    ) {
+    function updateTaskUrl(taskId: string, url: string, key: string, offset: number) {
         invoke('update_task_url', {
             taskId,
             url,
@@ -84,8 +79,9 @@ export const useTaskStore = defineStore('tasks', () => {
         }).catch(console.error)
     }
 
-    function cancelTask(taskId: string) {
-        invoke('cancel_task', { taskId }).catch(console.error)
+    function cancelTask(taskId: string, deleteFile?: boolean) {
+        invoke('cancel_task', { taskId, deleteFile: deleteFile ?? false })
+            .catch(console.error)
         tasks.value = tasks.value.filter((t) => t.id !== taskId)
         saveTasks()
     }

@@ -60,9 +60,9 @@ pub async fn resume_task(app: AppHandle, task_id: String) -> Result<(), String> 
 }
 
 #[command]
-pub async fn cancel_task(app: AppHandle, task_id: String) -> Result<(), String> {
+pub async fn cancel_task(app: AppHandle, task_id: String, delete_file: bool) -> Result<(), String> {
     let engine = app.state::<DownloadEngine>().clone();
-    engine.cancel(&task_id).await;
+    engine.cancel(&task_id, delete_file).await;
     Ok(())
 }
 

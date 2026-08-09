@@ -5,9 +5,10 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
-use reqwest::header::RANGE;
+use reqwest::header::{RANGE, CONTENT_LENGTH};
 use reqwest::StatusCode;
 use tauri::AppHandle;
+use tauri::Manager; // 提供 try_state 方法
 
 use super::engine::TaskController;
 use super::progress;
@@ -25,7 +26,7 @@ pub struct SongInfo {
 pub struct TaskContext {
     pub task_id: String,
     pub url: String,
-    pub save_path: String,
+    pub save_path: String, // 最终文件路径
     pub quality: String,
     pub key: String,
     pub file_size: u64,
@@ -35,11 +36,7 @@ pub struct TaskContext {
 }
 
 /// 实际执行下载的函数
-pub async fn download_task(
-    ctx: TaskContext,
-    controller: TaskController,
-    app_handle: AppHandle,
-) {
+pub async fn download_task(ctx: TaskContext, controller: TaskController, app_handle: AppHandle) {
     // 1. 等待 URL 就绪（如果 url 还为空）
     if ctx.url.is_empty() {
         controller.url_ready.notified().await;
@@ -53,58 +50,119 @@ pub async fn download_task(
             let (dir, template) = get_download_settings(&app_handle).await;
             let song = &ctx.song_info;
             let fname = filename::build_filename(&template, song);
-            let full_path = Path::new(&dir).join(fname);
+            let full_path = Path::new(&dir).join(format!("{}.flac", fname));
             full_path.to_string_lossy().to_string()
         }
     };
 
+    log::info!("任务 {} 开始下载，文件路径: {}", ctx.task_id, download_dir);
+
     // 3. 创建目录并验证
     let parent_dir = Path::new(&download_dir).parent().unwrap_or(Path::new("."));
     if !parent_dir.exists() {
-        if let Err(_e) = fs::create_dir_all(parent_dir) {
+        if let Err(e) = fs::create_dir_all(parent_dir) {
+            log::error!("创建下载目录失败: {}", e);
             progress::emit_error(&app_handle, &ctx.task_id, "下载目录无法访问");
             return;
         }
     }
 
-    // 4. 打开/创建文件（追加模式）
-    let mut file = match OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&download_dir)
-    {
-        Ok(f) => f,
-        Err(e) => {
-            progress::emit_error(&app_handle, &ctx.task_id, &format!("文件创建失败: {}", e));
-            return;
-        }
-    };
-
-    // 如果续传且文件大小小于 offset，重置文件
+    // 4. 根据 offset 决定打开模式：新任务覆盖，续传任务追加
     let mut downloaded = ctx.downloaded_offset;
-    if downloaded > 0 {
-        if let Ok(metadata) = file.metadata() {
+
+    let mut file = if downloaded == 0 {
+        // 全新下载，覆盖已有文件
+        match OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&download_dir)
+        {
+            Ok(f) => f,
+            Err(e) => {
+                log::error!("文件创建失败: {}", e);
+                progress::emit_error(&app_handle, &ctx.task_id, &format!("文件创建失败: {}", e));
+                return;
+            }
+        }
+    } else {
+        // 续传任务，先以追加模式打开
+        let f = match OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&download_dir)
+        {
+            Ok(f) => f,
+            Err(e) => {
+                log::error!("文件打开失败: {}", e);
+                progress::emit_error(&app_handle, &ctx.task_id, &format!("文件打开失败: {}", e));
+                return;
+            }
+        };
+
+        // 校验文件大小：如果文件长度小于期望的偏移，说明文件异常，重置下载
+        if let Ok(metadata) = f.metadata() {
             if metadata.len() < downloaded {
-                if let Err(e) = file.set_len(0) {
-                    progress::emit_error(&app_handle, &ctx.task_id, &format!("文件重置失败: {}", e));
+                // 文件被截断或损坏，清空文件并从头下载
+                drop(f); // 先关闭文件，避免占用
+                let mut new_file = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&download_dir)
+                    .map_err(|e| {
+                        log::error!("文件重置失败: {}", e);
+                        progress::emit_error(
+                            &app_handle,
+                            &ctx.task_id,
+                            &format!("文件重置失败: {}", e),
+                        );
+                    })
+                    .ok();
+                if new_file.is_none() {
                     return;
                 }
                 downloaded = 0;
+                new_file.unwrap()
+            } else {
+                f
             }
+        } else {
+            // 无法获取元数据，保守起见改为从头下载
+            drop(f);
+            let mut new_file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&download_dir)
+                .map_err(|e| {
+                    log::error!("文件重置失败: {}", e);
+                    progress::emit_error(
+                        &app_handle,
+                        &ctx.task_id,
+                        &format!("文件重置失败: {}", e),
+                    );
+                })
+                .ok();
+            if new_file.is_none() {
+                return;
+            }
+            downloaded = 0;
+            new_file.unwrap()
         }
-    }
-
-    let total = ctx.file_size;
+    };
 
     // 5. 解密上下文
     let decrypt_ctx = crypto::init_decryption(&ctx.key, !ctx.key.is_empty());
 
     // 6. 下载循环
     'download: loop {
+        // 检查取消
         if controller.cancel_token.is_cancelled() {
             break 'download;
         }
 
+        // 初始暂停等待（任务刚创建时可能处于暂停状态）
         while controller.pause_flag.load(Ordering::SeqCst) {
             controller.resume_notify.notified().await;
             if controller.cancel_token.is_cancelled() {
@@ -112,8 +170,13 @@ pub async fn download_task(
             }
         }
 
-        let client = reqwest::Client::new();
-        let mut request = client.get(&ctx.url);
+        let client = reqwest::Client::builder()
+            .user_agent("HotDownloader/1.0")
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
+        let mut request = client.get(&ctx.url).header("Referer", "https://y.qq.com");
+
         if downloaded > 0 {
             request = request.header(RANGE, format!("bytes={}-", downloaded));
         }
@@ -121,10 +184,30 @@ pub async fn download_task(
         let response = match request.send().await {
             Ok(resp) => resp,
             Err(e) => {
+                log::error!("网络错误: {}", e);
                 progress::emit_error(&app_handle, &ctx.task_id, &format!("网络错误: {}", e));
                 break 'download;
             }
         };
+
+        // 从响应头获取真实文件总大小
+        let total = {
+            if let Some(content_range) = response.headers().get("content-range") {
+                content_range
+                    .to_str()
+                    .ok()
+                    .and_then(|s| s.split('/').last().and_then(|n| n.parse::<u64>().ok()))
+                    .unwrap_or(0)
+            } else {
+                response
+                    .headers()
+                    .get(CONTENT_LENGTH)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(0)
+            }
+        };
+        let total = if total > 0 { total } else { ctx.file_size };
 
         let status = response.status();
         if status == StatusCode::RANGE_NOT_SATISFIABLE {
@@ -142,6 +225,7 @@ pub async fn download_task(
             } else {
                 "下载失败"
             };
+            log::error!("下载错误: {}", error_msg);
             progress::emit_error(&app_handle, &ctx.task_id, error_msg);
             break 'download;
         }
@@ -150,22 +234,29 @@ pub async fn download_task(
         let mut last_report = Instant::now();
         let mut last_downloaded = downloaded;
 
-        while let Some(chunk_result) = stream.next().await {
+        // 内部流读取循环
+        loop {
+            // 检查取消
             if controller.cancel_token.is_cancelled() {
                 break 'download;
             }
-            while controller.pause_flag.load(Ordering::SeqCst) {
-                controller.resume_notify.notified().await;
-                if controller.cancel_token.is_cancelled() {
-                    break 'download;
-                }
+
+            // 检查暂停：如果暂停，跳出内部循环，回到外层重新请求
+            if controller.pause_flag.load(Ordering::SeqCst) {
+                break;
             }
 
+            let chunk_result = stream.next().await;
             let chunk = match chunk_result {
-                Ok(bytes) => bytes,
-                Err(e) => {
+                Some(Ok(bytes)) => bytes,
+                Some(Err(e)) => {
+                    log::error!("读取流错误: {}", e);
                     progress::emit_error(&app_handle, &ctx.task_id, &format!("读取流错误: {}", e));
                     break 'download;
+                }
+                None => {
+                    // 流正常结束，跳出内部循环去发送完成事件
+                    break;
                 }
             };
 
@@ -178,6 +269,7 @@ pub async fn download_task(
 
             // 写入文件
             if let Err(e) = file.write_all(&chunk_data) {
+                log::error!("写入文件错误: {}", e);
                 progress::emit_error(&app_handle, &ctx.task_id, &format!("写入文件错误: {}", e));
                 break 'download;
             }
@@ -198,42 +290,98 @@ pub async fn download_task(
             }
 
             if total > 0 && downloaded >= total {
+                log::info!("下载完成: {}", download_dir);
                 progress::emit_completed(&app_handle, &ctx.task_id, &download_dir);
                 break 'download;
             }
         }
 
-        if !controller.cancel_token.is_cancelled()
-            && !controller.pause_flag.load(Ordering::SeqCst)
-        {
+        // 跳出内部循环后的处理
+        if controller.pause_flag.load(Ordering::SeqCst) {
+            // 因暂停跳出，等待恢复通知
+            loop {
+                controller.resume_notify.notified().await;
+                if !controller.pause_flag.load(Ordering::SeqCst) {
+                    break;
+                }
+                if controller.cancel_token.is_cancelled() {
+                    break 'download;
+                }
+            }
+            // 恢复后继续外层循环（将重新发送请求）
+            continue 'download;
+        }
+
+        // 不是暂停（流结束），发送完成事件
+        if !controller.cancel_token.is_cancelled() {
             progress::emit_completed(&app_handle, &ctx.task_id, &download_dir);
         }
         break 'download;
     }
 
-    let _ = file.sync_all();
+    // 显式关闭文件句柄，释放资源
+    drop(file);
+
+    // 如果任务被取消且用户要求删除文件，执行删除
+    if controller.cancel_token.is_cancelled()
+        && controller.delete_file_on_cancel.load(Ordering::SeqCst)
+    {
+        log::info!("取消任务，正在删除文件: {}", download_dir);
+        if let Err(e) = fs::remove_file(&download_dir) {
+            log::error!("删除文件失败: {}", e);
+        } else {
+            log::info!("文件已成功删除: {}", download_dir);
+        }
+    }
 }
 
+/// 获取下载目录（绝对路径）及文件命名模板
 async fn get_download_settings(app_handle: &AppHandle) -> (String, String) {
     use crate::storage::store_wrapper;
-    let default_dir = dirs::download_dir()
-        .unwrap_or_else(|| Path::new(".").to_path_buf())
-        .to_string_lossy()
-        .to_string();
+
+    let default_dir = get_default_download_dir();
     let default_template = "{song} - {artist}".to_string();
 
     let settings_json = store_wrapper::load_string(app_handle, "settings").unwrap_or_default();
     let settings: serde_json::Value =
         serde_json::from_str(&settings_json).unwrap_or(serde_json::json!({}));
+
     let dir = settings
         .get("downloadDir")
         .and_then(|v| v.as_str())
-        .unwrap_or(&default_dir)
-        .to_string();
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| default_dir.clone());
+
+    // 确保目录路径是绝对路径，否则回退到默认下载目录
+    let dir = if Path::new(&dir).is_absolute() {
+        dir
+    } else {
+        log::warn!(
+            "下载目录不是绝对路径，已回退为默认下载目录: {}",
+            default_dir
+        );
+        default_dir
+    };
+
     let template = settings
         .get("namingTemplate")
         .and_then(|v| v.as_str())
         .unwrap_or(&default_template)
         .to_string();
+
     (dir, template)
+}
+
+/// 获取系统默认下载目录，失败时使用临时目录（确保绝对路径）
+fn get_default_download_dir() -> String {
+    if let Some(d) = dirs::download_dir() {
+        return d.to_string_lossy().to_string();
+    }
+    if let Some(home) = dirs::home_dir() {
+        let fallback = home.join("Downloads");
+        return fallback.to_string_lossy().to_string();
+    }
+    // 最终回退到临时目录
+    std::env::temp_dir().to_string_lossy().to_string()
 }

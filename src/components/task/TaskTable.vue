@@ -18,7 +18,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     (e: 'update:selectedRowKeys', keys: string[]): void
-    (e: 'action', action: string, taskId: string): void
+    // 增加第三个参数 extra，用于传递删除文件标志等
+    (e: 'action', action: string, taskId: string, extra?: Record<string, any>): void
 }>()
 
 const columns: DataTableColumn<TaskRecord>[] = [
@@ -90,7 +91,10 @@ const columns: DataTableColumn<TaskRecord>[] = [
         render(row: TaskRecord) {
             return h(NSpace, { justify: 'center' }, () =>
                 renderActions(row, {
-                    emit: (action: string, taskId: string) => emit('action', action, taskId),
+                    // 显式传递第三个参数，确保 extra 不被丢弃
+                    emit: (action: string, taskId: string, extra?: Record<string, any>) => {
+                        emit('action', action, taskId, extra)
+                    },
                 })
             )
         },
