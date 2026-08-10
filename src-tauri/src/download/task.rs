@@ -22,7 +22,7 @@ pub struct SongInfo {
     pub title: String,
     pub artist: String,
     pub album: String,
-    pub quality: String, // 新增：品质标签
+    pub quality: String,
 }
 
 /// 单个任务的上下文信息
@@ -42,6 +42,39 @@ pub struct TaskContext {
     pub song_info: SongInfo,
     pub quality_filename: String,
     pub final_path: Arc<Mutex<Option<String>>>, // 与控制器共享的文件路径
+}
+
+/// 重试获取下载链接（网络错误时最多尝试 3 次）
+async fn fetch_download_link_with_retry(
+    song_id: &str,
+    filename: &str,
+    task_id: &str,
+) -> Result<(String, String), String> {
+    let mut last_err = String::new();
+    for attempt in 0..3 {
+        match api::get_download_link(song_id, filename).await {
+            Ok(link) => return Ok(link),
+            Err(e) => {
+                last_err = e;
+                log::warn!(
+                    "任务 {} 获取下载链接失败 (尝试 {}/3): {}",
+                    task_id,
+                    attempt + 1,
+                    last_err
+                );
+                if attempt < 2 {
+                    tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+                    // 1s, 2s, 4s
+                }
+            }
+        }
+    }
+    Err(last_err)
+}
+
+/// 判断错误是否属于可重试的网络类错误
+fn is_retryable_network_error(err: &reqwest::Error) -> bool {
+    err.is_timeout() || err.is_connect() || err.is_request() && !err.is_body()
 }
 
 /// 实际执行下载的函数
@@ -108,19 +141,17 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 
         // 如果没有有效链接，实时获取（首次进入或暂停恢复后）
         if url.is_empty() {
-            match api::get_download_link(&ctx.song_id, &ctx.quality_filename).await {
+            match fetch_download_link_with_retry(&ctx.song_id, &ctx.quality_filename, &ctx.task_id)
+                .await
+            {
                 Ok((new_url, new_key)) => {
                     url = new_url;
                     key = new_key;
                     log::info!("任务 {} 获取到新下载链接", ctx.task_id);
                 }
                 Err(e) => {
-                    log::error!("获取下载链接失败: {}", e);
-                    progress::emit_error(
-                        &app_handle,
-                        &ctx.task_id,
-                        &format!("获取下载链接失败: {}", e),
-                    );
+                    log::error!("任务 {} 最终获取下载链接失败: {}", ctx.task_id, e);
+                    progress::emit_error(&app_handle, &ctx.task_id, "网络错误，请稍后重试");
                     break 'download;
                 }
             }
@@ -155,7 +186,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                         progress::emit_error(
                             &app_handle,
                             &ctx.task_id,
-                            &format!("文件创建失败: {}", e),
+                            "文件创建失败，请检查磁盘空间",
                         );
                         break 'download;
                     }
@@ -169,8 +200,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                 {
                     Ok(f) => {
                         // 校验文件大小：如果文件长度小于期望的偏移，说明文件异常，重置下载
-                        let metadata = f.metadata();
-                        if let Ok(meta) = metadata {
+                        if let Ok(meta) = f.metadata() {
                             if meta.len() < downloaded {
                                 // 文件被截断或损坏，清空文件并从头下载
                                 drop(f); // 先关闭文件，避免占用
@@ -184,7 +214,11 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                                     })
                                     .ok();
                                 if new_f.is_none() {
-                                    progress::emit_error(&app_handle, &ctx.task_id, "文件重置失败");
+                                    progress::emit_error(
+                                        &app_handle,
+                                        &ctx.task_id,
+                                        "文件异常，请重试",
+                                    );
                                     break 'download;
                                 }
                                 downloaded = 0;
@@ -205,7 +239,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                                 })
                                 .ok();
                             if new_f.is_none() {
-                                progress::emit_error(&app_handle, &ctx.task_id, "文件重置失败");
+                                progress::emit_error(&app_handle, &ctx.task_id, "文件异常，请重试");
                                 break 'download;
                             }
                             downloaded = 0;
@@ -214,11 +248,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                     }
                     Err(e) => {
                         log::error!("文件打开失败: {}", e);
-                        progress::emit_error(
-                            &app_handle,
-                            &ctx.task_id,
-                            &format!("文件打开失败: {}", e),
-                        );
+                        progress::emit_error(&app_handle, &ctx.task_id, "文件访问失败");
                         break 'download;
                     }
                 }
@@ -226,24 +256,38 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             file = Some(f);
         }
 
-        // 发起 HTTP 请求
+        // 发起下载请求（带网络重试）
         let client = reqwest::Client::builder()
             .user_agent("HotDownloader/1.0")
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
-        let mut request = client.get(&url).header("Referer", "https://y.qq.com");
+        let mut attempt = 0;
+        let response = loop {
+            let mut request = client.get(&url).header("Referer", "https://y.qq.com");
 
-        if downloaded > 0 {
-            request = request.header(RANGE, format!("bytes={}-", downloaded));
-        }
-
-        let response = match request.send().await {
-            Ok(resp) => resp,
-            Err(e) => {
-                log::error!("网络错误: {}", e);
-                progress::emit_error(&app_handle, &ctx.task_id, &format!("网络错误: {}", e));
-                break 'download;
+            if downloaded > 0 {
+                request = request.header(RANGE, format!("bytes={}-", downloaded));
+            }
+            match request.send().await {
+                Ok(resp) => break resp,
+                Err(e) => {
+                    attempt += 1;
+                    log::warn!(
+                        "任务 {} 下载请求失败 (尝试 {}/3): {}",
+                        ctx.task_id,
+                        attempt,
+                        e
+                    );
+                    if is_retryable_network_error(&e) && attempt < 3 {
+                        tokio::time::sleep(Duration::from_secs(1 << (attempt - 1))).await;
+                        continue;
+                    } else {
+                        log::error!("任务 {} 最终下载请求失败: {}", ctx.task_id, e);
+                        progress::emit_error(&app_handle, &ctx.task_id, "网络错误，请稍后重试");
+                        break 'download;
+                    }
+                }
             }
         };
 
@@ -273,17 +317,15 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
         }
 
         if status.is_client_error() || status.is_server_error() {
-            let error_msg = if status == StatusCode::FORBIDDEN
+            if status == StatusCode::FORBIDDEN
                 || status == StatusCode::GONE
                 || status == StatusCode::NOT_FOUND
             {
                 progress::emit_link_expired(&app_handle, &ctx.task_id, downloaded);
-                "链接过期"
             } else {
-                "下载失败"
-            };
-            log::error!("下载错误: {}", error_msg);
-            progress::emit_error(&app_handle, &ctx.task_id, error_msg);
+                log::error!("任务 {} 服务器错误: {}", ctx.task_id, status);
+                progress::emit_error(&app_handle, &ctx.task_id, "服务器错误，请稍后重试");
+            }
             break 'download;
         }
 
@@ -307,8 +349,8 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             let chunk = match chunk_result {
                 Some(Ok(bytes)) => bytes,
                 Some(Err(e)) => {
-                    log::error!("读取流错误: {}", e);
-                    progress::emit_error(&app_handle, &ctx.task_id, &format!("读取流错误: {}", e));
+                    log::error!("任务 {} 读取流错误: {}", ctx.task_id, e);
+                    progress::emit_error(&app_handle, &ctx.task_id, "网络错误，请稍后重试");
                     break 'download;
                 }
                 None => {
@@ -328,11 +370,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             if let Some(ref mut f) = file {
                 if let Err(e) = f.write_all(&chunk_data) {
                     log::error!("写入文件错误: {}", e);
-                    progress::emit_error(
-                        &app_handle,
-                        &ctx.task_id,
-                        &format!("写入文件错误: {}", e),
-                    );
+                    progress::emit_error(&app_handle, &ctx.task_id, "写入文件失败");
                     break 'download;
                 }
             }
