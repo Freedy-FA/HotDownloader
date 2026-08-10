@@ -2,12 +2,14 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use reqwest::header::{CONTENT_LENGTH, RANGE};
 use reqwest::StatusCode;
 use tauri::AppHandle;
+use tokio::sync::Mutex;
 
 use super::engine::TaskController;
 use super::progress;
@@ -39,6 +41,7 @@ pub struct TaskContext {
     pub app_handle: AppHandle,
     pub song_info: SongInfo,
     pub quality_filename: String,
+    pub final_path: Arc<Mutex<Option<String>>>, // 与控制器共享的文件路径
 }
 
 /// 实际执行下载的函数

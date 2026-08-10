@@ -86,6 +86,7 @@ impl DownloadEngine {
                 album,
                 quality, // 传入品质
             },
+            final_path: controller.final_path.clone(), // 共享路径
         };
 
         self.task_contexts
@@ -190,9 +191,8 @@ impl DownloadEngine {
 
                     tokio::spawn(async move {
                         download_task(ctx, ctrl, app_handle).await;
-                        // 清理控制器
+                        // 下载结束（完成/错误），仅移除控制器，保留任务上下文供删除文件使用
                         engine.active_controllers.lock().await.remove(&task_id);
-                        engine.task_contexts.lock().await.remove(&task_id);
                         active_downloads.fetch_sub(1, Ordering::SeqCst);
                         scheduler_notify.notify_one();
                     });
@@ -204,14 +204,15 @@ impl DownloadEngine {
         }
     }
 
-    /// 移除任务记录（由前端手动删除任务时调用）
-    /// 删除文件直接从控制器记录的最终路径中获取，不再依赖前端传入
+    /// 移除任务记录，并可选删除文件
     pub async fn remove(&self, task_id: &str, delete_file: bool) {
-        // 先清理队列中的残留（如果存在）
+        // 先清理就绪队列
         self.ready_tasks
             .lock()
             .await
             .retain(|t| t.task_id != task_id);
+
+        // 尝试从活跃控制器获取 final_path（任务可能仍在运行）
         let ctrl = self.active_controllers.lock().await.remove(task_id);
         if let Some(ctrl) = ctrl {
             if delete_file {
@@ -224,7 +225,24 @@ impl DownloadEngine {
                     }
                 }
             }
+        } else {
+            // 任务不在活跃列表（已结束），从 task_contexts 中获取 final_path
+            if delete_file {
+                let ctx_map = self.task_contexts.lock().await;
+                if let Some(ctx) = ctx_map.get(task_id) {
+                    let path_guard = ctx.final_path.lock().await;
+                    if let Some(p) = path_guard.as_ref() {
+                        if let Err(e) = fs::remove_file(p) {
+                            log::error!("删除文件失败 {}: {}", p, e);
+                        } else {
+                            log::info!("已删除文件: {}", p);
+                        }
+                    }
+                }
+            }
         }
+
+        // 无论如何，清除任务上下文
         self.task_contexts.lock().await.remove(task_id);
     }
 }
