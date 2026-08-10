@@ -30,6 +30,7 @@ pub struct TaskContext {
     pub song_id: String,
     pub url: String,
     pub save_path: String, // 最终文件路径
+    #[allow(dead_code)] // 抑制未使用警告，保留备用
     pub quality: String,
     pub key: String,
     pub file_size: u64,

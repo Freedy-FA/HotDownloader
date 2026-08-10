@@ -26,8 +26,6 @@ pub fn open_file_location(path: String) -> Result<(), String> {
         return Err("文件不存在".to_string());
     }
 
-    let parent = file_path.parent().unwrap_or(Path::new("."));
-
     #[cfg(target_os = "windows")]
     {
         Command::new("explorer")
