@@ -3,6 +3,10 @@ use std::path::Path;
 use std::process::Command;
 use tauri::command;
 
+#[cfg(target_os = "linux")]
+use open;
+
+
 /// 获取系统默认下载目录路径
 #[command]
 pub fn get_default_download_dir() -> String {
@@ -44,7 +48,10 @@ pub fn open_file_location(path: String) -> Result<(), String> {
 
     #[cfg(target_os = "linux")]
     {
-        // 使用 xdg-open 打开文件夹，再尝试 dbus
+        // 获取父目录
+        let parent = file_path.parent().ok_or("无法获取父目录")?;
+
+        // 尝试用 xdg-open 打开父目录（直接传 Path）
         if Command::new("xdg-open")
             .arg(parent)
             .spawn()
@@ -52,18 +59,25 @@ pub fn open_file_location(path: String) -> Result<(), String> {
         {
             return Ok(());
         }
-        // 备选：使用 nautilus 等直接选中文件（不通用）
+
+        // 备选：使用 dbus-send 选中文件（部分文件管理器支持）
         if Command::new("dbus-send")
-            .args(["--session", "--print-reply", "--dest=org.freedesktop.FileManager1",
-                   "/org/freedesktop/FileManager1",
-                   "org.freedesktop.FileManager1.ShowItems",
-                   &format!("array:string:{}", path)])
+            .args([
+                "--session",
+                "--print-reply",
+                "--dest=org.freedesktop.FileManager1",
+                "/org/freedesktop/FileManager1",
+                "org.freedesktop.FileManager1.ShowItems",
+                &format!("array:string:{}", path), // path 是 String 类型
+            ])
             .spawn()
-            .is_err()
+            .is_ok()
         {
-            // 最后尝试打开父目录
-            open::that(parent).map_err(|e| e.to_string())?;
+            return Ok(());
         }
+
+        // 最后回退：用 open 打开父目录（不选中文件）
+        open::that(parent).map_err(|e| e.to_string())?;
     }
 
     Ok(())

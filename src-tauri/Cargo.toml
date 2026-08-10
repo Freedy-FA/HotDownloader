@@ -32,6 +32,7 @@ tokio-util = "0.7.19"
 futures-util = "0.3.33"
 url = "2.5.8"
 umc_qmc = { path = "../libs/um_crypto/um_crypto/qmc" }
+open = "5.4.1"
 
 [profile.dev]
 incremental = true # 以较小的步骤编译您的二进制文件。
