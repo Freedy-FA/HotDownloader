@@ -18,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { NSpin } from 'naive-ui'
 import SearchBar from '../components/search/SearchBar.vue'
 import SearchHistory from '../components/search/SearchHistory.vue'
@@ -37,6 +37,16 @@ const hasSearched = ref(false)
 
 const historyStore = useHistoryStore()
 const { downloadSingle, batchDownload } = useDownloadActions()
+
+// 监听关键词变化：清空时重置搜索结果
+watch(keyword, (newVal) => {
+    if (!newVal) {
+        hasSearched.value = false
+        searchResults.value = []
+        selectedIds.value = []
+    }
+})
+
 
 async function handleSearch() {
     const term = keyword.value.trim()
