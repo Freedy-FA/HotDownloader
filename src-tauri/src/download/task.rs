@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
-use reqwest::header::{RANGE, CONTENT_LENGTH};
+use reqwest::header::{CONTENT_LENGTH, RANGE};
 use reqwest::StatusCode;
 use tauri::AppHandle;
 use tauri::Manager; // 提供 try_state 方法
@@ -52,10 +52,12 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             let song = &ctx.song_info;
             let fname = filename::build_filename(&template, song);
             // 从品质文件名中提取扩展名，若无法提取则回退为 "flac"
-            let ext = Path::new(&ctx.quality_filename)
+            let raw_ext = Path::new(&ctx.quality_filename)
                 .extension()
                 .and_then(|s| s.to_str())
                 .unwrap_or("flac");
+            // 映射解密后的扩展名
+            let ext = map_decrypted_extension(raw_ext);
             let full_path = Path::new(&dir).join(format!("{}.{}", fname, ext));
             full_path.to_string_lossy().to_string()
         }
@@ -390,4 +392,14 @@ fn get_default_download_dir() -> String {
     }
     // 最终回退到临时目录
     std::env::temp_dir().to_string_lossy().to_string()
+}
+
+/// 将加密文件扩展名映射为解密后的真实扩展名
+fn map_decrypted_extension(ext: &str) -> &str {
+    match ext {
+        "mgg" => "ogg",
+        "mflac" => "flac",
+        // 未知则保持原样
+        _ => ext,
+    }
 }
