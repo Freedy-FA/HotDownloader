@@ -101,14 +101,41 @@ impl DownloadEngine {
         self.scheduler_notify.notify_one();
     }
 
-    /// 异步更新任务 URL 并移入就绪队列
+    /// 异步更新任务 URL 并移入就绪队列（重试时调用）
     pub async fn enqueue_task(&self, task_id: &str, offset: u64) {
-        if let Some(mut ctx) = self.task_contexts.lock().await.get(task_id).cloned() {
-            ctx.downloaded_offset = offset;
-            ctx.url.clear();
-            self.ready_tasks.lock().await.push_back(ctx);
-            self.scheduler_notify.notify_one();
-        }
+        // 获取任务上下文（克隆后修改）
+        let mut ctx = match self.task_contexts.lock().await.get(task_id).cloned() {
+            Some(c) => c,
+            None => return,
+        };
+        ctx.downloaded_offset = offset;
+        ctx.url.clear(); // 强制在下载线程中重新获取链接
+
+        // 如果任务之前已经结束，控制器可能已被移除；
+        // 为了能让调度器再次启动该任务，需要重新创建一个控制器。
+        // 保留与上下文共享的 final_path，确保后续删除文件能找到路径。
+        let controller = TaskController {
+            cancel_token: CancellationToken::new(),
+            pause_flag: Arc::new(AtomicBool::new(false)),
+            resume_notify: Arc::new(Notify::new()),
+            url_ready: Arc::new(Notify::new()),
+            delete_file_on_cancel: Arc::new(AtomicBool::new(false)),
+            final_path: ctx.final_path.clone(), // 共享同一个 final_path
+        };
+
+        // 重新插入控制器（覆盖可能存在的旧控制器）
+        self.active_controllers
+            .lock()
+            .await
+            .insert(task_id.to_string(), controller);
+        // 更新上下文（保存偏移量等修改）
+        self.task_contexts
+            .lock()
+            .await
+            .insert(task_id.to_string(), ctx.clone());
+        // 放入就绪队列
+        self.ready_tasks.lock().await.push_back(ctx);
+        self.scheduler_notify.notify_one();
     }
 
     /// 异步暂停任务

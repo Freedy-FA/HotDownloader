@@ -46,25 +46,7 @@ pub struct TaskContext {
 
 /// 实际执行下载的函数
 pub async fn download_task(ctx: TaskContext, controller: TaskController, app_handle: AppHandle) {
-    // 1. 若 URL 为空，实时获取下载链接
-    let (url, key) = if ctx.url.is_empty() {
-        match api::get_download_link(&ctx.song_id, &ctx.quality_filename).await {
-            Ok((url, key)) => (url, key),
-            Err(e) => {
-                log::error!("获取下载链接失败: {}", e);
-                progress::emit_error(
-                    &app_handle,
-                    &ctx.task_id,
-                    &format!("获取下载链接失败: {}", e),
-                );
-                return;
-            }
-        }
-    } else {
-        (ctx.url.clone(), ctx.key.clone())
-    };
-
-    // 2. 构建最终保存路径
+    // 1. 构建最终保存路径（只需一次）
     let download_dir = {
         if !ctx.save_path.is_empty() {
             ctx.save_path.clone()
@@ -88,7 +70,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 
     log::info!("任务 {} 开始下载，文件路径: {}", ctx.task_id, download_dir);
 
-    // 3. 创建目录并验证
+    // 2. 创建目录并验证
     let parent_dir = Path::new(&download_dir).parent().unwrap_or(Path::new("."));
     if !parent_dir.exists() {
         if let Err(e) = fs::create_dir_all(parent_dir) {
@@ -98,107 +80,18 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
         }
     }
 
-    // 4. 根据 offset 决定打开模式：新任务覆盖，续传任务追加
+    // 3. 初始化已下载偏移量
     let mut downloaded = ctx.downloaded_offset;
 
-    let mut file = if downloaded == 0 {
-        // 全新下载，覆盖已有文件
-        match OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&download_dir)
-        {
-            Ok(f) => f,
-            Err(e) => {
-                log::error!("文件创建失败: {}", e);
-                progress::emit_error(&app_handle, &ctx.task_id, &format!("文件创建失败: {}", e));
-                return;
-            }
-        }
-    } else {
-        // 续传任务，先以追加模式打开
-        let f = match OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&download_dir)
-        {
-            Ok(f) => f,
-            Err(e) => {
-                log::error!("文件打开失败: {}", e);
-                progress::emit_error(&app_handle, &ctx.task_id, &format!("文件打开失败: {}", e));
-                return;
-            }
-        };
+    // 4. 链接与解密密钥（每次循环可能重新获取）
+    let mut url = String::new();
+    let mut key = String::new();
 
-        // 校验文件大小：如果文件长度小于期望的偏移，说明文件异常，重置下载
-        if let Ok(metadata) = f.metadata() {
-            if metadata.len() < downloaded {
-                // 文件被截断或损坏，清空文件并从头下载
-                drop(f); // 先关闭文件，避免占用
-                let new_file = OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(&download_dir)
-                    .map_err(|e| {
-                        log::error!("文件重置失败: {}", e);
-                        progress::emit_error(
-                            &app_handle,
-                            &ctx.task_id,
-                            &format!("文件重置失败: {}", e),
-                        );
-                    })
-                    .ok();
-                if new_file.is_none() {
-                    return;
-                }
-                downloaded = 0;
-                new_file.unwrap()
-            } else {
-                f
-            }
-        } else {
-            // 无法获取元数据，保守起见改为从头下载
-            drop(f);
-            let new_file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&download_dir)
-                .map_err(|e| {
-                    log::error!("文件重置失败: {}", e);
-                    progress::emit_error(
-                        &app_handle,
-                        &ctx.task_id,
-                        &format!("文件重置失败: {}", e),
-                    );
-                })
-                .ok();
-            if new_file.is_none() {
-                return;
-            }
-            downloaded = 0;
-            new_file.unwrap()
-        }
-    };
+    // 5. 文件句柄（在循环外保持，续传时在循环内打开）
+    //    声明为 Option 以便在暂停恢复时重新打开文件。
+    let mut file: Option<fs::File> = None;
 
-    // 5. 解密上下文：仅 .mgg/.mflac 文件需要解密
-    let need_decrypt = {
-        let ext = Path::new(&ctx.quality_filename)
-            .extension()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
-        ext == "mgg" || ext == "mflac"
-    };
-    let decrypt_ctx = if need_decrypt && !key.is_empty() {
-        crypto::init_decryption(&key, true)
-    } else {
-        // 不需要解密或没有密钥，创建禁用解密的上下文
-        crypto::init_decryption("", false)
-    };
-
-    // 6. 下载循环
+    // 下载循环
     'download: loop {
         // 检查取消
         if controller.cancel_token.is_cancelled() {
@@ -213,6 +106,127 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             }
         }
 
+        // 如果没有有效链接，实时获取（首次进入或暂停恢复后）
+        if url.is_empty() {
+            match api::get_download_link(&ctx.song_id, &ctx.quality_filename).await {
+                Ok((new_url, new_key)) => {
+                    url = new_url;
+                    key = new_key;
+                    log::info!("任务 {} 获取到新下载链接", ctx.task_id);
+                }
+                Err(e) => {
+                    log::error!("获取下载链接失败: {}", e);
+                    progress::emit_error(
+                        &app_handle,
+                        &ctx.task_id,
+                        &format!("获取下载链接失败: {}", e),
+                    );
+                    break 'download;
+                }
+            }
+        }
+
+        // 根据是否需要解密创建解密上下文
+        let need_decrypt = {
+            let ext = Path::new(&ctx.quality_filename)
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            ext == "mgg" || ext == "mflac"
+        };
+        let decrypt_ctx = if need_decrypt && !key.is_empty() {
+            crypto::init_decryption(&key, true)
+        } else {
+            crypto::init_decryption("", false)
+        };
+
+        // 打开/续传文件
+        if file.is_none() {
+            let f = if downloaded == 0 {
+                match OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&download_dir)
+                {
+                    Ok(f) => f,
+                    Err(e) => {
+                        log::error!("文件创建失败: {}", e);
+                        progress::emit_error(
+                            &app_handle,
+                            &ctx.task_id,
+                            &format!("文件创建失败: {}", e),
+                        );
+                        break 'download;
+                    }
+                }
+            } else {
+                // 续传任务，先以追加模式打开
+                match OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&download_dir)
+                {
+                    Ok(f) => {
+                        // 校验文件大小：如果文件长度小于期望的偏移，说明文件异常，重置下载
+                        let metadata = f.metadata();
+                        if let Ok(meta) = metadata {
+                            if meta.len() < downloaded {
+                                // 文件被截断或损坏，清空文件并从头下载
+                                drop(f); // 先关闭文件，避免占用
+                                let new_f = OpenOptions::new()
+                                    .write(true)
+                                    .create(true)
+                                    .truncate(true)
+                                    .open(&download_dir)
+                                    .map_err(|e| {
+                                        log::error!("文件重置失败: {}", e);
+                                    })
+                                    .ok();
+                                if new_f.is_none() {
+                                    progress::emit_error(&app_handle, &ctx.task_id, "文件重置失败");
+                                    break 'download;
+                                }
+                                downloaded = 0;
+                                new_f.unwrap()
+                            } else {
+                                f
+                            }
+                        } else {
+                            // 无法获取元数据，保守起见改为从头下载
+                            drop(f);
+                            let new_f = OpenOptions::new()
+                                .write(true)
+                                .create(true)
+                                .truncate(true)
+                                .open(&download_dir)
+                                .map_err(|e| {
+                                    log::error!("文件重置失败: {}", e);
+                                })
+                                .ok();
+                            if new_f.is_none() {
+                                progress::emit_error(&app_handle, &ctx.task_id, "文件重置失败");
+                                break 'download;
+                            }
+                            downloaded = 0;
+                            new_f.unwrap()
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("文件打开失败: {}", e);
+                        progress::emit_error(
+                            &app_handle,
+                            &ctx.task_id,
+                            &format!("文件打开失败: {}", e),
+                        );
+                        break 'download;
+                    }
+                }
+            };
+            file = Some(f);
+        }
+
+        // 发起 HTTP 请求
         let client = reqwest::Client::builder()
             .user_agent("HotDownloader/1.0")
             .build()
@@ -311,10 +325,16 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             crypto::decrypt_chunk(&decrypt_ctx, &mut chunk_data, chunk_len, downloaded);
 
             // 写入文件
-            if let Err(e) = file.write_all(&chunk_data) {
-                log::error!("写入文件错误: {}", e);
-                progress::emit_error(&app_handle, &ctx.task_id, &format!("写入文件错误: {}", e));
-                break 'download;
+            if let Some(ref mut f) = file {
+                if let Err(e) = f.write_all(&chunk_data) {
+                    log::error!("写入文件错误: {}", e);
+                    progress::emit_error(
+                        &app_handle,
+                        &ctx.task_id,
+                        &format!("写入文件错误: {}", e),
+                    );
+                    break 'download;
+                }
             }
 
             downloaded += chunk_len;
@@ -339,7 +359,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             }
         }
 
-        // 跳出内部循环后的处理
+        // 内部循环结束的原因判断
         if controller.pause_flag.load(Ordering::SeqCst) {
             // 因暂停跳出，等待恢复通知
             loop {
@@ -351,14 +371,14 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                     break 'download;
                 }
             }
-            // 恢复后继续外层循环（将重新发送请求）
+            // 恢复后需要重新获取链接，清空 url 与 key，并释放当前文件句柄
+            url.clear();
+            key.clear();
+            file = None; // 关闭文件，下次循环重新打开
             continue 'download;
         }
 
-        // 不是暂停（流结束），发送完成事件
-        if !controller.cancel_token.is_cancelled() {
-            progress::emit_completed(&app_handle, &ctx.task_id, &download_dir);
-        }
+        // 不是暂停（流结束、完成等），跳出外层循环
         break 'download;
     }
 
