@@ -180,8 +180,20 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
         }
     };
 
-    // 5. 解密上下文
-    let decrypt_ctx = crypto::init_decryption(&key, !key.is_empty());
+    // 5. 解密上下文：仅 .mgg/.mflac 文件需要解密
+    let need_decrypt = {
+        let ext = Path::new(&ctx.quality_filename)
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        ext == "mgg" || ext == "mflac"
+    };
+    let decrypt_ctx = if need_decrypt && !key.is_empty() {
+        crypto::init_decryption(&key, true)
+    } else {
+        // 不需要解密或没有密钥，创建禁用解密的上下文
+        crypto::init_decryption("", false)
+    };
 
     // 6. 下载循环
     'download: loop {
