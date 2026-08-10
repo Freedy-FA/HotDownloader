@@ -69,7 +69,7 @@ const hasAny = computed(
 .group-title {
     font-size: 13px;
     font-weight: 500;
-    color: var(--n-text-color-3);
+    color: var(--color-text-secondary);
     margin-bottom: 6px;
     padding-left: 4px;
 }
@@ -90,7 +90,7 @@ const hasAny = computed(
 
 .item-name {
     font-size: 14px;
-    color: var(--n-text-color);
+    color: var(--color-text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -98,7 +98,7 @@ const hasAny = computed(
 
 .item-singer {
     font-size: 12px;
-    color: var(--n-text-color-3);
+    color: var(--color-text-secondary);
     white-space: nowrap;
 }
 </style>

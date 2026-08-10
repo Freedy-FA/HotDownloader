@@ -33,7 +33,7 @@ defineEmits<{
 .hot-header {
     font-size: 14px;
     font-weight: 500;
-    color: var(--n-text-color-2);
+    color: var(--color-text-secondary);
     margin-bottom: 8px;
 }
 

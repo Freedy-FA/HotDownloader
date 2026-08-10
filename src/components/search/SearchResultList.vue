@@ -78,7 +78,7 @@ function toggleSelect(songId: string, selected: boolean) {
 
 .count-text {
     font-size: 13px;
-    color: var(--n-text-color-3);
+    color: var(--color-text-secondary);
 }
 
 .song-items {

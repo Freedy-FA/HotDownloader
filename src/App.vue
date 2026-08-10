@@ -17,5 +17,6 @@ const theme = computed(() => (useOsTheme().value === 'dark' ? darkTheme : null))
 <style scoped>
 .app-root {
   height: 100%;
+  color: var(--color-text);
 }
 </style>

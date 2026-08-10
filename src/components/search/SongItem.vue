@@ -78,11 +78,12 @@ const sortedQualities = computed(() => {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    color: var(--color-text);
 }
 
 .subtitle {
     font-size: 13px;
-    color: var(--n-text-color-3);
+    color: var(--color-text-secondary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
