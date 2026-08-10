@@ -1,0 +1,3 @@
+[submodule "libs/um_crypto"]
+	path = libs/um_crypto
+	url = https://git.um-react.app/um/lib_um_crypto_rust.git
