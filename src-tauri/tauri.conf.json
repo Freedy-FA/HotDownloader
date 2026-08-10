@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "hotdownloader",
-  "version": "0.1.0",
+  "productName": "HotDownloader",
+  "version": "1.0.0",
   "identifier": "lerd.hotdownloader",
   "build": {
     "frontendDist": "../dist",
@@ -33,6 +33,12 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "shortDescription": "音乐下载器",
+    "longDescription": "基于 Tauri 2 + Vue 3 的桌面音乐下载应用，支持搜索、下载音乐歌曲。",
+    "resources": [
+      "../LICENSE",
+      "../NOTICE"
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
