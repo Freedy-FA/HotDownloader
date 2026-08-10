@@ -6,7 +6,6 @@ import { QUALITY_DOWNGRADE_ORDER } from '../types'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useTaskStore } from '../stores/taskStore'
 import QualitySelector from '../components/search/QualitySelector.vue'
-import * as musicApi from '../api/musicApi'
 
 // 下载逻辑
 export function useDownloadActions() {
@@ -72,20 +71,6 @@ export function useDownloadActions() {
         return null
     }
 
-    /** 异步为 waiting 任务获取下载链接并更新 */
-    async function fetchAndUpdateTask(
-        taskId: string,
-        songId: string,
-        filename: string
-    ) {
-        try {
-            const { url, key } = await musicApi.fetchDownloadLink(songId, filename)
-            taskStore.updateTaskUrl(taskId, url, key, 0)
-        } catch (error: any) {
-            taskStore.errorTask(taskId, error.message || '获取下载链接失败')
-        }
-    }
-
     async function downloadSingle(
         song: SongInfo,
         forceQuality?: Quality
@@ -144,9 +129,6 @@ export function useDownloadActions() {
             retryCount: 0,
             addedAt: Date.now(),
         })
-
-        // 异步获取链接，不阻塞
-        fetchAndUpdateTask(taskId, song.id, resolved.filename)
 
         if (settingsStore.settings.jumpToTask) {
             router.push('/task')
@@ -240,9 +222,6 @@ export function useDownloadActions() {
                 retryCount: 0,
                 addedAt: Date.now(),
             })
-
-            // 异步获取链接
-            fetchAndUpdateTask(taskId, song.id, resolved.filename)
         }
 
         if (settingsStore.settings.jumpToTask) {
@@ -256,20 +235,6 @@ export function useDownloadActions() {
 
         const canRetry = taskStore.retryTask(taskId)
         if (!canRetry) return
-
-        const currentTask = taskStore.tasks.find((t) => t.id === taskId)
-        if (!currentTask) return
-
-        // 重试时直接使用任务中保存的 filename 重新获取链接
-        try {
-            const { url, key } = await musicApi.fetchDownloadLink(
-                currentTask.songId,
-                currentTask.filename
-            )
-            taskStore.updateTaskUrl(taskId, url, key, currentTask.downloaded)
-        } catch (error: any) {
-            taskStore.errorTask(taskId, error.message || '重试失败')
-        }
     }
 
     return {

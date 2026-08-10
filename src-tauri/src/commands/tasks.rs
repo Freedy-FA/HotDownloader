@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager, command};
+use tauri::{command, AppHandle, Manager};
 use crate::download::engine::DownloadEngine;
 use crate::storage::store_wrapper;
 
@@ -16,6 +16,7 @@ pub fn save_tasks(app: AppHandle, tasks_json: String) -> Result<(), String> {
 pub async fn add_download_task(
     app: AppHandle,
     task_id: String,
+    song_id: String,
     url: String,
     save_path: String,
     quality: String,
@@ -28,21 +29,18 @@ pub async fn add_download_task(
 ) -> Result<(), String> {
     let engine = app.state::<DownloadEngine>();
     engine
-        .add_task(task_id, url, save_path, quality, filename, key, file_size, song_title, artist, album)
+        .add_task(
+            task_id, song_id, url, save_path, quality, filename, key, file_size, song_title,
+            artist, album,
+        )
         .await;
     Ok(())
 }
 
 #[command]
-pub async fn update_task_url(
-    app: AppHandle,
-    task_id: String,
-    url: String,
-    key: String,
-    offset: u64,
-) -> Result<(), String> {
+pub async fn enqueue_task(app: AppHandle, task_id: String, offset: u64) -> Result<(), String> {
     let engine = app.state::<DownloadEngine>().clone();
-    engine.update_task(&task_id, url, key, offset).await;
+    engine.enqueue_task(&task_id, offset).await;
     Ok(())
 }
 
@@ -68,11 +66,7 @@ pub async fn cancel_task(app: AppHandle, task_id: String, delete_file: bool) -> 
 }
 
 #[command]
-pub async fn remove_task(
-    app: AppHandle,
-    task_id: String,
-    delete_file: bool,
-) -> Result<(), String> {
+pub async fn remove_task(app: AppHandle, task_id: String, delete_file: bool) -> Result<(), String> {
     let engine = app.state::<DownloadEngine>().clone();
     engine.remove(&task_id, delete_file).await;
     Ok(())

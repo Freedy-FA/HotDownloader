@@ -13,6 +13,7 @@ use tokio::sync::Mutex; // 用于 final_path 的互斥锁
 
 use super::engine::TaskController;
 use super::progress;
+use crate::commands::api;
 use crate::utils::{crypto, filename};
 
 /// 歌曲信息，用于生成文件名
@@ -24,8 +25,10 @@ pub struct SongInfo {
 }
 
 /// 单个任务的上下文信息
+#[derive(Clone)]
 pub struct TaskContext {
     pub task_id: String,
+    pub song_id: String,
     pub url: String,
     pub save_path: String, // 最终文件路径
     pub quality: String,
@@ -39,10 +42,23 @@ pub struct TaskContext {
 
 /// 实际执行下载的函数
 pub async fn download_task(ctx: TaskContext, controller: TaskController, app_handle: AppHandle) {
-    // 1. 等待 URL 就绪（如果 url 还为空）
-    if ctx.url.is_empty() {
-        controller.url_ready.notified().await;
-    }
+    // 1. 若 URL 为空，实时获取下载链接
+    let (url, key) = if ctx.url.is_empty() {
+        match api::get_download_link(&ctx.song_id, &ctx.quality_filename).await {
+            Ok((url, key)) => (url, key),
+            Err(e) => {
+                log::error!("获取下载链接失败: {}", e);
+                progress::emit_error(
+                    &app_handle,
+                    &ctx.task_id,
+                    &format!("获取下载链接失败: {}", e),
+                );
+                return;
+            }
+        }
+    } else {
+        (ctx.url.clone(), ctx.key.clone())
+    };
 
     // 2. 构建最终保存路径
     let download_dir = {
@@ -165,7 +181,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
     };
 
     // 5. 解密上下文
-    let decrypt_ctx = crypto::init_decryption(&ctx.key, !ctx.key.is_empty());
+    let decrypt_ctx = crypto::init_decryption(&key, !key.is_empty());
 
     // 6. 下载循环
     'download: loop {
@@ -187,7 +203,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
-        let mut request = client.get(&ctx.url).header("Referer", "https://y.qq.com");
+        let mut request = client.get(&url).header("Referer", "https://y.qq.com");
 
         if downloaded > 0 {
             request = request.header(RANGE, format!("bytes={}-", downloaded));
@@ -348,7 +364,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 }
 
 /// 获取下载目录（绝对路径）及文件命名模板
-async fn get_download_settings(app_handle: &AppHandle) -> (String, String) {
+pub(crate) async fn get_download_settings(app_handle: &AppHandle) -> (String, String) {
     use crate::storage::store_wrapper;
 
     let default_dir = get_default_download_dir();
@@ -399,7 +415,7 @@ fn get_default_download_dir() -> String {
 }
 
 /// 将加密文件扩展名映射为解密后的真实扩展名
-fn map_decrypted_extension(ext: &str) -> &str {
+pub(crate) fn map_decrypted_extension(ext: &str) -> &str {
     match ext {
         "mgg" => "ogg",
         "mflac" => "flac",

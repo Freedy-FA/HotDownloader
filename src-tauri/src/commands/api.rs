@@ -243,8 +243,11 @@ fn build_qualities(file: &Value, vs: &Value) -> Vec<Value> {
 /// 参数：song_id 为歌曲 mid，filename 为品质文件名（如 M800001abc.mp3）
 /// 返回 JSON: { "url": "完整下载链接", "key": "ekey" }
 /// https://github.com/chrisdong/FileHub/blob/e1d752e1f29f877b7c895ae5aaff32a179fad051/root/importURLs/lxmusic/HeiMusic%E8%81%9A%E5%90%88%E6%BA%90_v1.1.5.js#L287
-#[command]
-pub async fn fetch_download_link(song_id: String, filename: String) -> Result<String, String> {
+/// 核心函数：获取下载链接和密钥，供下载模块调用
+pub(crate) async fn get_download_link(
+    song_id: &str,
+    filename: &str,
+) -> Result<(String, String), String> {
     let client = reqwest::Client::new();
 
     let request_body = json!({
@@ -259,8 +262,8 @@ pub async fn fetch_download_link(song_id: String, filename: String) -> Result<St
             "module": "music.vkey.GetEVkey",
             "method": "CgiGetHotVkey",
             "param": {
-                "filename": [&filename],
-                "songmid": [&song_id]
+                "filename": [filename],
+                "songmid": [song_id]
             }
         },
         "music.vkey.GetEVkey.GetEkey": {
@@ -269,8 +272,8 @@ pub async fn fetch_download_link(song_id: String, filename: String) -> Result<St
             "param": {
                 "finfo": [
                     {
-                        "filename": &filename,
-                        "mid": &song_id
+                        "filename": filename,
+                        "mid": song_id
                     }
                 ]
             }
@@ -312,12 +315,13 @@ pub async fn fetch_download_link(song_id: String, filename: String) -> Result<St
 
     // 拼接完整下载 URL（使用主 CDN）
     let full_url = format!("https://wx.music.tc.qq.com/{}", purl);
+    Ok((full_url, ekey.to_string()))
+}
 
-    let result = json!({
-        "url": full_url,
-        "key": ekey
-    });
-
+#[command]
+pub async fn fetch_download_link(song_id: String, filename: String) -> Result<String, String> {
+    let (url, key) = get_download_link(&song_id, &filename).await?;
+    let result = json!({ "url": url, "key": key });
     Ok(result.to_string())
 }
 

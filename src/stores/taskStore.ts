@@ -59,6 +59,7 @@ export const useTaskStore = defineStore('tasks', () => {
         saveTasks()
         invoke('add_download_task', {
             taskId: task.id,
+            songId: task.songId,
             url: '',
             savePath: '',
             quality: task.quality,
@@ -68,15 +69,6 @@ export const useTaskStore = defineStore('tasks', () => {
             songTitle: task.songTitle,
             artist: task.artist,
             album: task.album,
-        }).catch(console.error)
-    }
-
-    function updateTaskUrl(taskId: string, url: string, key: string, offset: number) {
-        invoke('update_task_url', {
-            taskId,
-            url,
-            key,
-            offset,
         }).catch(console.error)
     }
 
@@ -90,12 +82,16 @@ export const useTaskStore = defineStore('tasks', () => {
     // 移除任务，不再传递 filePath，后端自行获取
     async function removeTask(taskId: string, deleteFile: boolean = false) {
         try {
-            await invoke('remove_task', { taskId, deleteFile });
+            await invoke('remove_task', { taskId, deleteFile })
         } catch (e) {
-            console.error('remove_task 失败:', e);
+            console.error('remove_task 失败:', e)
         }
         tasks.value = tasks.value.filter((t) => t.id !== taskId)
         saveTasks()
+    }
+
+    function enqueueTask(taskId: string, offset: number) {
+        invoke('enqueue_task', { taskId, offset }).catch(console.error)
     }
 
     function pauseTask(taskId: string) {
@@ -146,10 +142,6 @@ export const useTaskStore = defineStore('tasks', () => {
                 saveTasks()
                 return false
             }
-        } else {
-            // 未超过3次，保留 downloaded（续传用）
-            // 如果错误原因是链接过期，downloaded 保留；网络错误也保留（可能已部分下载）
-            task.downloaded = task.downloaded // 保持不变
         }
 
         task.status = 'waiting'
@@ -157,6 +149,7 @@ export const useTaskStore = defineStore('tasks', () => {
             task.errorMsg = undefined
         }
         saveTasks()
+        enqueueTask(taskId, task.downloaded)
         return true
     }
 
@@ -216,9 +209,9 @@ export const useTaskStore = defineStore('tasks', () => {
         loadTasks,
         saveTasks,
         addTask,
-        updateTaskUrl,
         cancelTask,
         removeTask,
+        enqueueTask,
         pauseTask,
         resumeTask,
         retryTask,

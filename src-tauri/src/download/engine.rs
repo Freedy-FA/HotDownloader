@@ -1,9 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs;
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 use log;
 use tauri::AppHandle;
@@ -26,24 +24,24 @@ pub struct TaskController {
 #[derive(Clone)]
 pub struct DownloadEngine {
     pub app_handle: AppHandle,
-    pending_tasks: Arc<Mutex<VecDeque<TaskContext>>>,
     ready_tasks: Arc<Mutex<VecDeque<TaskContext>>>,
     active_controllers: Arc<Mutex<HashMap<String, TaskController>>>,
     max_concurrent: Arc<AtomicU32>,
     active_downloads: Arc<AtomicU32>,
     scheduler_notify: Arc<Notify>,
+    task_contexts: Arc<Mutex<HashMap<String, TaskContext>>>,
 }
 
 impl DownloadEngine {
     pub fn new(app_handle: AppHandle) -> Self {
         DownloadEngine {
             app_handle,
-            pending_tasks: Arc::new(Mutex::new(VecDeque::new())),
             ready_tasks: Arc::new(Mutex::new(VecDeque::new())),
             active_controllers: Arc::new(Mutex::new(HashMap::new())),
             max_concurrent: Arc::new(AtomicU32::new(3)),
             active_downloads: Arc::new(AtomicU32::new(0)),
             scheduler_notify: Arc::new(Notify::new()),
+            task_contexts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -51,6 +49,7 @@ impl DownloadEngine {
     pub async fn add_task(
         &self,
         task_id: String,
+        song_id: String,
         url: String,
         save_path: String,
         quality: String,
@@ -72,6 +71,7 @@ impl DownloadEngine {
 
         let ctx = TaskContext {
             task_id: task_id.clone(),
+            song_id,
             url,
             save_path,
             quality,
@@ -87,32 +87,26 @@ impl DownloadEngine {
             },
         };
 
+        self.task_contexts
+            .lock()
+            .await
+            .insert(task_id.clone(), ctx.clone());
         self.active_controllers
             .lock()
             .await
             .insert(task_id, controller);
-        self.pending_tasks.lock().await.push_back(ctx);
+        self.ready_tasks.lock().await.push_back(ctx);
         self.scheduler_notify.notify_one();
     }
 
     /// 异步更新任务 URL 并移入就绪队列
-    pub async fn update_task(&self, task_id: &str, url: String, key: String, offset: u64) {
-        let mut pending = self.pending_tasks.lock().await;
-        if let Some(pos) = pending.iter().position(|t| t.task_id == task_id) {
-            let mut ctx = pending.remove(pos).unwrap();
-            ctx.url = url;
-            ctx.key = key;
+    pub async fn enqueue_task(&self, task_id: &str, offset: u64) {
+        if let Some(mut ctx) = self.task_contexts.lock().await.get(task_id).cloned() {
             ctx.downloaded_offset = offset;
-            drop(pending); // 释放锁，避免死锁
+            ctx.url.clear();
             self.ready_tasks.lock().await.push_back(ctx);
+            self.scheduler_notify.notify_one();
         }
-
-        // 通知该任务的 url_ready（如果有）
-        if let Some(ctrl) = self.active_controllers.lock().await.get(task_id) {
-            ctrl.url_ready.notify_one();
-        }
-
-        self.scheduler_notify.notify_one();
     }
 
     /// 异步暂停任务
@@ -144,10 +138,6 @@ impl DownloadEngine {
         }
 
         // 清理队列
-        self.pending_tasks
-            .lock()
-            .await
-            .retain(|t| t.task_id != task_id);
         self.ready_tasks
             .lock()
             .await
@@ -194,9 +184,14 @@ impl DownloadEngine {
                     let active_downloads = self.active_downloads.clone();
                     let scheduler_notify = self.scheduler_notify.clone();
                     let app_handle = self.app_handle.clone();
+                    let task_id = ctx.task_id.clone();
+                    let engine = self.clone();
 
                     tokio::spawn(async move {
                         download_task(ctx, ctrl, app_handle).await;
+                        // 清理控制器
+                        engine.active_controllers.lock().await.remove(&task_id);
+                        engine.task_contexts.lock().await.remove(&task_id);
                         active_downloads.fetch_sub(1, Ordering::SeqCst);
                         scheduler_notify.notify_one();
                     });
@@ -212,9 +207,10 @@ impl DownloadEngine {
     /// 删除文件直接从控制器记录的最终路径中获取，不再依赖前端传入
     pub async fn remove(&self, task_id: &str, delete_file: bool) {
         // 先清理队列中的残留（如果存在）
-        self.pending_tasks.lock().await.retain(|t| t.task_id != task_id);
-        self.ready_tasks.lock().await.retain(|t| t.task_id != task_id);
-
+        self.ready_tasks
+            .lock()
+            .await
+            .retain(|t| t.task_id != task_id);
         let ctrl = self.active_controllers.lock().await.remove(task_id);
         if let Some(ctrl) = ctrl {
             if delete_file {
@@ -228,5 +224,6 @@ impl DownloadEngine {
                 }
             }
         }
+        self.task_contexts.lock().await.remove(task_id);
     }
 }
