@@ -34,6 +34,7 @@ pub struct TaskContext {
     pub save_path: String, // 最终文件路径
     #[allow(dead_code)] // 抑制未使用警告，保留备用
     pub quality: String,
+    #[allow(dead_code)] // 抑制未使用警告，保留备用
     pub key: String,
     pub file_size: u64,
     pub downloaded_offset: u64,
