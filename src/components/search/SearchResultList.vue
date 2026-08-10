@@ -1,23 +1,32 @@
 <template>
-    <div class="search-result-list" v-if="songs.length > 0">
-        <div class="list-header">
-            <n-checkbox :checked="isAllSelected" :indeterminate="isIndeterminate" @update:checked="toggleAll">
-                全选
-            </n-checkbox>
-            <span class="count-text">已选 {{ selectedIds.length }} / {{ songs.length }} 首</span>
-        </div>
+    <div class="search-result-list">
+        <template v-if="songs.length > 0">
+            <div class="list-header">
+                <n-checkbox :checked="isAllSelected" :indeterminate="isIndeterminate" @update:checked="toggleAll">
+                    全选
+                </n-checkbox>
+                <span class="count-text">已选 {{ selectedIds.length }} / {{ songs.length }} 首</span>
+            </div>
 
-        <div class="song-items">
-            <SongItem v-for="song in songs" :key="song.id" :song="song" :selected="selectedIds.includes(song.id)"
-                @toggle-select="(val) => toggleSelect(song.id, val)" @download="(song) => $emit('download', song)" />
+            <div class="song-items">
+                <SongItem v-for="song in songs" :key="song.id" :song="song" :selected="selectedIds.includes(song.id)"
+                    @toggle-select="(val) => toggleSelect(song.id, val)"
+                    @download="(song) => $emit('download', song)" />
+            </div>
+        </template>
+
+        <div v-else class="empty-result">
+            <n-empty description="暂无搜索结果" />
+            <div class="retry-wrapper">
+                <n-button type="primary" @click="$emit('retry')">重试</n-button>
+            </div>
         </div>
     </div>
-    <n-empty v-else description="暂无搜索结果" />
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NCheckbox, NEmpty } from 'naive-ui'
+import { NCheckbox, NEmpty, NButton } from 'naive-ui'
 import type { SongInfo } from '../../types'
 import SongItem from './SongItem.vue'
 
@@ -29,6 +38,7 @@ const props = defineProps<{
 const emit = defineEmits<{
     (e: 'update:selectedIds', ids: string[]): void
     (e: 'download', song: SongInfo): void
+    (e: 'retry'): void          // 新增重试事件
 }>()
 
 const isAllSelected = computed(
@@ -75,5 +85,17 @@ function toggleSelect(songId: string, selected: boolean) {
     display: flex;
     flex-direction: column;
     gap: 8px;
+}
+
+.empty-result {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 0;
+}
+
+.retry-wrapper {
+    margin-top: 16px;
+    text-align: center;
 }
 </style>

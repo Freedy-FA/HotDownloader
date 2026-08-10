@@ -13,7 +13,7 @@
         </div>
 
         <SearchResultList v-if="hasSearched && !loading" :songs="searchResults" v-model:selectedIds="selectedIds"
-            @download="onSingleDownload" />
+            @download="onSingleDownload" @retry="handleSearch" />
 
         <BatchDownloadBar v-if="selectedIds.length > 0" :selectedCount="selectedIds.length"
             @batch-download="onBatchDownload" />
