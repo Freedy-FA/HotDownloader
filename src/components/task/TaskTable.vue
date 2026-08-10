@@ -41,7 +41,7 @@ const columns: DataTableColumn<TaskRecord>[] = [
     {
         title: '音质',
         key: 'quality',
-        width: 80,
+        width: 100,
         render(row: TaskRecord) {
             return row.quality
         },
