@@ -23,9 +23,20 @@ const emit = defineEmits<{
 
 const keywordModel = ref(props.keyword)
 
+// 向上同步
 watch(keywordModel, (val) => {
     emit('update:keyword', val)
 })
+
+// 向下同步：当父组件 keyword 变化时更新输入框
+watch(
+    () => props.keyword,
+    (newVal) => {
+        if (newVal !== keywordModel.value) {
+            keywordModel.value = newVal
+        }
+    }
+)
 
 function handleSearch() {
     if (keywordModel.value.trim()) {

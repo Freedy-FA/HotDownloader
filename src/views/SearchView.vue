@@ -2,8 +2,11 @@
     <div class="search-view">
         <SearchBar v-model:keyword="keyword" @search="handleSearch" />
 
-        <SearchHistory v-if="!keyword && !hasSearched" :history="historyStore.history" @select="onHistorySelect"
-            @remove="onHistoryRemove" @clear="historyStore.clearHistory" />
+        <div v-if="!keyword && !hasSearched">
+            <SearchHistory :history="historyStore.history" @select="onHistorySelect" @remove="onHistoryRemove"
+                @clear="historyStore.clearHistory" />
+            <HotKeywords :keywords="hotKeywords" :loading="hotLoading" @select="onHotClick" />
+        </div>
 
         <div v-if="loading" class="loading-wrapper">
             <n-spin size="medium" />
@@ -18,10 +21,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { NSpin } from 'naive-ui'
 import SearchBar from '../components/search/SearchBar.vue'
 import SearchHistory from '../components/search/SearchHistory.vue'
+import HotKeywords from '../components/search/HotKeywords.vue'
 import SearchResultList from '../components/search/SearchResultList.vue'
 import BatchDownloadBar from '../components/search/BatchDownloadBar.vue'
 import { useHistoryStore } from '../stores/historyStore'
@@ -35,10 +39,14 @@ const selectedIds = ref<string[]>([])
 const loading = ref(false)
 const hasSearched = ref(false)
 
+// 热搜
+const hotKeywords = ref<string[]>([])
+const hotLoading = ref(false)
+
 const historyStore = useHistoryStore()
 const { downloadSingle, batchDownload } = useDownloadActions()
 
-// 监听关键词变化：清空时重置搜索结果
+// 清空关键词时重置页面
 watch(keyword, (newVal) => {
     if (!newVal) {
         hasSearched.value = false
@@ -47,6 +55,27 @@ watch(keyword, (newVal) => {
     }
 })
 
+// 获取热搜
+async function fetchHotKeywords() {
+    hotLoading.value = true
+    try {
+        hotKeywords.value = await musicApi.getHotKeywords()
+    } catch {
+        hotKeywords.value = []
+    } finally {
+        hotLoading.value = false
+    }
+}
+
+onMounted(() => {
+    fetchHotKeywords()
+})
+
+// 热搜点击
+function onHotClick(word: string) {
+    keyword.value = word
+    handleSearch()
+}
 
 async function handleSearch() {
     const term = keyword.value.trim()
@@ -67,6 +96,7 @@ async function handleSearch() {
     }
 }
 
+// 搜索历史点击
 function onHistorySelect(term: string) {
     keyword.value = term
     handleSearch()
@@ -99,5 +129,38 @@ function onBatchDownload() {
     display: flex;
     justify-content: center;
     padding: 40px 0;
+}
+
+/* 热搜区域样式 */
+.hot-section {
+    margin-top: 16px;
+}
+
+.hot-header {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--n-text-color-2);
+    margin-bottom: 8px;
+}
+
+.hot-loading {
+    display: flex;
+    justify-content: center;
+    padding: 12px 0;
+}
+
+.hot-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.hot-tag {
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.hot-tag:hover {
+    opacity: 0.8;
 }
 </style>
