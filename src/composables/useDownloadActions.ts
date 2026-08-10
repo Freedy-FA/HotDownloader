@@ -1,12 +1,14 @@
 import { h, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { useDialog, NSelect } from 'naive-ui'
-import type { Quality, SongInfo, TaskRecord, QualityItem } from '../types'
-import { QUALITY_DOWNGRADE_ORDER, ALL_QUALITY_ORDER } from '../types'
+import { useDialog } from 'naive-ui'
+import type { Quality, SongInfo, QualityItem } from '../types'
+import { QUALITY_DOWNGRADE_ORDER } from '../types'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useTaskStore } from '../stores/taskStore'
+import QualitySelector from '../components/search/QualitySelector.vue'
 import * as musicApi from '../api/musicApi'
 
+// 下载逻辑
 export function useDownloadActions() {
     const dialog = useDialog()
     const router = useRouter()
@@ -17,38 +19,24 @@ export function useDownloadActions() {
         return Date.now().toString(36) + Math.random().toString(36).substring(2)
     }
 
-    /** 弹出品质选择对话框，选项来自传入的可用品质列表 */
+    /** 弹出品质选择弹窗，返回选中的品质标签 */
     function askQuality(qualities: QualityItem[]): Promise<string> {
         return new Promise((resolve, reject) => {
-            // 按 ALL_QUALITY_ORDER 排序，保持界面一致性
-            const sorted = [...qualities].sort(
-                (a, b) =>
-                    ALL_QUALITY_ORDER.indexOf(a.quality) -
-                    ALL_QUALITY_ORDER.indexOf(b.quality)
-            )
-            const options = sorted.map((q) => ({
-                label: `${q.quality} (${(q.size / 1048576).toFixed(2)} MB)`,
-                value: q.quality,
-            }))
+            const compRef = ref<InstanceType<typeof QualitySelector>>()
 
-            const selected = ref<string>(options[0]?.value ?? '')
             const d = dialog.create({
                 title: '选择下载音质',
                 content: () =>
-                    h('div', { style: 'padding: 12px 0' }, [
-                        h(NSelect, {
-                            value: selected.value,
-                            onUpdateValue: (val: string) => {
-                                selected.value = val
-                            },
-                            options,
-                            style: 'width: 260px',
-                        }),
-                    ]),
+                    h(QualitySelector, { qualities, ref: compRef }),
                 positiveText: '确定',
                 negativeText: '取消',
                 onPositiveClick: () => {
-                    resolve(selected.value)
+                    const val = compRef.value?.selected
+                    if (val) {
+                        resolve(val)
+                    } else {
+                        reject(new Error('未选择品质'))
+                    }
                     d.destroy()
                 },
                 onNegativeClick: () => {
