@@ -90,7 +90,7 @@ export interface DownloadLinkExpiredPayload {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-    defaultQuality: '128kmp3',
+    defaultQuality: 'ask',
     autoDowngrade: true,
     downloadDir: '',
     namingTemplate: '{song} - {artist}',
