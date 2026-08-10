@@ -17,7 +17,6 @@ import { useDownloadActions } from '../composables/useDownloadActions'
 import TaskTabs from '../components/task/TaskTabs.vue'
 import TaskTable from '../components/task/TaskTable.vue'
 import TaskBatchActions from '../components/task/TaskBatchActions.vue'
-import type { TaskRecord, TaskStatus } from '../types'
 
 const taskStore = useTaskStore()
 const { retryTask } = useDownloadActions()

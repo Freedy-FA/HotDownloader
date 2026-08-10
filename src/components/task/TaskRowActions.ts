@@ -17,7 +17,7 @@ export function renderActions(
     // 等待中：取消（可能文件尚未创建，但用户可选择同时删除潜在的空文件）
     if (task.status === 'waiting') {
         nodes.push(
-            createCancelWithDeletePopconfirm(task, emit, taskId)
+            createCancelWithDeletePopconfirm(emit, taskId)
         )
     }
 
@@ -50,7 +50,7 @@ export function renderActions(
             )
         )
         nodes.push(
-            createCancelWithDeletePopconfirm(task, emit, taskId)
+            createCancelWithDeletePopconfirm(emit, taskId)
         )
     }
 
@@ -76,7 +76,6 @@ export function renderActions(
         )
         nodes.push(
             createRemoveWithDeletePopconfirm(
-                task,
                 emit,
                 taskId,
                 '确定删除该任务记录吗？',
@@ -100,7 +99,6 @@ export function renderActions(
         )
         nodes.push(
             createRemoveWithDeletePopconfirm(
-                task,
                 emit,
                 taskId,
                 '确定删除该任务记录吗？',
@@ -117,7 +115,6 @@ export function renderActions(
  * 创建带“删除文件”选项的取消确认弹窗（用于 waiting/paused 状态）
  */
 function createCancelWithDeletePopconfirm(
-    task: TaskRecord,
     emit: TaskActionContext['emit'],
     taskId: string
 ) {
@@ -154,7 +151,6 @@ function createCancelWithDeletePopconfirm(
 
 /**
  * 创建带“删除文件”选项的删除确认弹窗（用于 error/completed 状态）
- * @param task 任务记录
  * @param emit 事件发射器
  * @param taskId 任务 ID
  * @param confirmText 确认提示语
@@ -162,7 +158,6 @@ function createCancelWithDeletePopconfirm(
  * @param defaultChecked 复选框默认是否勾选
  */
 function createRemoveWithDeletePopconfirm(
-    task: TaskRecord,
     emit: TaskActionContext['emit'],
     taskId: string,
     confirmText: string,
