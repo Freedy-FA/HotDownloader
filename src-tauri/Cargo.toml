@@ -30,6 +30,7 @@ dirs = "6.0.0"
 tokio = "1.53.1"
 tokio-util = "0.7.19"
 futures-util = "0.3.33"
+url = "2.5.8"
 
 [profile.dev]
 incremental = true # 以较小的步骤编译您的二进制文件。

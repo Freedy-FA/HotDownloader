@@ -23,3 +23,14 @@ export async function getHotKeywords(): Promise<string[]> {
     const json = await invoke<string>('fetch_hot_keywords')
     return JSON.parse(json) as string[]
 }
+
+// 获取搜索建议
+export async function fetchSuggestions(keyword: string): Promise<{
+    song: any[]
+    singer: any[]
+    album: any[]
+    mv: any[]
+}> {
+    const json = await invoke<string>('fetch_suggestions', { keyword })
+    return JSON.parse(json)
+}
