@@ -65,6 +65,8 @@ export function useDownloadActions() {
 
     /**
      * 根据期望品质和歌曲可用品质列表，返回实际可用的品质项（含 filename）
+     * 若无法满足且开启自动降级，则按降级顺序选择第一个可用品质
+     * 若仍无可用品质，返回 null
      */
     function resolveQualityForSong(
         song: SongInfo,
@@ -82,6 +84,7 @@ export function useDownloadActions() {
         return null
     }
 
+    /** 异步为 waiting 任务获取下载链接并更新 */
     async function fetchAndUpdateTask(
         taskId: string,
         songId: string,
@@ -114,6 +117,7 @@ export function useDownloadActions() {
 
         const resolved = resolveQualityForSong(song, quality)
         if (!resolved) {
+            // 直接创建错误任务
             const taskId = generateTaskId()
             taskStore.addTask({
                 id: taskId,
@@ -152,6 +156,8 @@ export function useDownloadActions() {
             retryCount: 0,
             addedAt: Date.now(),
         })
+
+        // 异步获取链接，不阻塞
         fetchAndUpdateTask(taskId, song.id, resolved.filename)
 
         if (settingsStore.settings.jumpToTask) {
@@ -246,6 +252,8 @@ export function useDownloadActions() {
                 retryCount: 0,
                 addedAt: Date.now(),
             })
+
+            // 异步获取链接
             fetchAndUpdateTask(taskId, song.id, resolved.filename)
         }
 
@@ -264,6 +272,7 @@ export function useDownloadActions() {
         const currentTask = taskStore.tasks.find((t) => t.id === taskId)
         if (!currentTask) return
 
+        // 重试时直接使用任务中保存的 filename 重新获取链接
         try {
             const { url, key } = await musicApi.fetchDownloadLink(
                 currentTask.songId,

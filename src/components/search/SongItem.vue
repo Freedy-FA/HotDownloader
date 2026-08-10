@@ -6,12 +6,12 @@
             <div class="title">{{ song.title }}</div>
             <div class="subtitle">{{ song.artist }} · {{ song.album }}</div>
             <div class="quality-tags">
-                <n-tag v-for="q in song.qualities.slice(0, 4)" :key="q.quality" size="tiny" :bordered="false"
+                <n-tag v-for="q in sortedQualities.slice(0, 4)" :key="q.quality" size="tiny" :bordered="false"
                     type="info">
                     {{ q.quality }}
                 </n-tag>
-                <n-tag v-if="song.qualities.length > 4" size="tiny" :bordered="false" type="info">
-                    +{{ song.qualities.length - 4 }}
+                <n-tag v-if="sortedQualities.length > 4" size="tiny" :bordered="false" type="info">
+                    +{{ sortedQualities.length - 4 }}
                 </n-tag>
             </div>
         </div>
@@ -22,10 +22,12 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { NCheckbox, NButton, NTag } from 'naive-ui'
 import type { SongInfo } from '../../types'
+import { ALL_QUALITY_ORDER } from '../../types'
 
-defineProps<{
+const props = defineProps<{
     song: SongInfo
     selected: boolean
 }>()
@@ -34,6 +36,18 @@ defineEmits<{
     (e: 'toggleSelect', selected: boolean): void
     (e: 'download', song: SongInfo): void
 }>()
+
+// 按品质从高到低排序
+const sortedQualities = computed(() => {
+    return [...props.song.qualities].sort((a, b) => {
+        const ia = ALL_QUALITY_ORDER.indexOf(a.quality)
+        const ib = ALL_QUALITY_ORDER.indexOf(b.quality)
+        // 未知品质放在末尾
+        const idxA = ia === -1 ? -1 : ia
+        const idxB = ib === -1 ? -1 : ib
+        return idxB - idxA  // 降序
+    })
+})
 </script>
 
 <style scoped>
