@@ -42,7 +42,7 @@ export const useTaskStore = defineStore('tasks', () => {
             }
         } catch (e: any) {
             console.error('加载任务失败:', e)
-            notify()?.error({ title: '加载任务失败', description: e?.message || String(e) })
+            notify()?.error({ title: '加载任务失败', description: e?.message || String(e), duration: 3000 })
         }
     }
 
@@ -53,7 +53,7 @@ export const useTaskStore = defineStore('tasks', () => {
             })
         } catch (e: any) {
             console.error('保存任务失败:', e)
-            notify()?.error({ title: '保存任务失败', description: e?.message || String(e) })
+            notify()?.error({ title: '保存任务失败', description: e?.message || String(e), duration: 3000 })
         }
     }
 
@@ -75,7 +75,7 @@ export const useTaskStore = defineStore('tasks', () => {
             album: task.album,
         }).catch((e: any) => {
             console.error('添加任务失败:', e)
-            notify()?.error({ title: '添加任务失败', description: e?.message || String(e) })
+            notify()?.error({ title: '添加任务失败', description: e?.message || String(e), duration: 3000 })
         })
     }
 
@@ -83,7 +83,7 @@ export const useTaskStore = defineStore('tasks', () => {
         invoke('cancel_task', { taskId, deleteFile: deleteFile ?? false })
             .catch((e: any) => {
                 console.error('取消任务失败:', e)
-                notify()?.error({ title: '取消任务失败', description: e?.message || String(e) })
+                notify()?.error({ title: '取消任务失败', description: e?.message || String(e), duration: 3000 })
             })
         tasks.value = tasks.value.filter((t) => t.id !== taskId)
         saveTasks()
@@ -95,7 +95,7 @@ export const useTaskStore = defineStore('tasks', () => {
             await invoke('remove_task', { taskId, deleteFile })
         } catch (e: any) {
             console.error('移除任务失败:', e)
-            notify()?.error({ title: '移除任务失败', description: e?.message || String(e) })
+            notify()?.error({ title: '移除任务失败', description: e?.message || String(e), duration: 3000 })
         }
         tasks.value = tasks.value.filter((t) => t.id !== taskId)
         saveTasks()
@@ -105,7 +105,7 @@ export const useTaskStore = defineStore('tasks', () => {
         invoke('enqueue_task', { taskId, offset })
             .catch((e: any) => {
                 console.error('重新入队失败:', e)
-                notify()?.error({ title: '重新入队失败', description: e?.message || String(e) })
+                notify()?.error({ title: '重新入队失败', description: e?.message || String(e), duration: 3000 })
             })
     }
 
@@ -113,7 +113,7 @@ export const useTaskStore = defineStore('tasks', () => {
         invoke('pause_task', { taskId })
             .catch((e: any) => {
                 console.error('暂停任务失败:', e)
-                notify()?.error({ title: '暂停任务失败', description: e?.message || String(e) })
+                notify()?.error({ title: '暂停任务失败', description: e?.message || String(e), duration: 3000 })
             })
         const task = tasks.value.find((t) => t.id === taskId)
         if (task && task.status === 'downloading') {
@@ -126,7 +126,7 @@ export const useTaskStore = defineStore('tasks', () => {
         invoke('resume_task', { taskId })
             .catch((e: any) => {
                 console.error('恢复任务失败:', e)
-                notify()?.error({ title: '恢复任务失败', description: e?.message || String(e) })
+                notify()?.error({ title: '恢复任务失败', description: e?.message || String(e), duration: 3000 })
             })
         const task = tasks.value.find((t) => t.id === taskId)
         if (task && task.status === 'paused') {
@@ -218,6 +218,7 @@ export const useTaskStore = defineStore('tasks', () => {
             notify()?.error({
                 title: '下载失败',
                 description: `歌曲“${task.songTitle}”错误：${event.payload.error_msg}`,
+                duration: 3000
             })
         })
 
@@ -232,6 +233,7 @@ export const useTaskStore = defineStore('tasks', () => {
             notify()?.warning({
                 title: '链接过期',
                 description: `歌曲“${task.songTitle}”下载链接过期，请稍后重试`,
+                duration: 3000
             })
         })
     }

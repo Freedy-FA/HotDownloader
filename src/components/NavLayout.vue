@@ -37,8 +37,8 @@ const route = useRoute()
 useCloseGuard()
 
 // 挂载通知实例到全局，供 store 使用
-const notification = useNotification()
-    ; (window as any).$notify = notification
+const notification = useNotification();
+(window as any).$notify = notification
 
 const isNarrow = ref(false)
 
