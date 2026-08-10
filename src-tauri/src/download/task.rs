@@ -9,6 +9,7 @@ use reqwest::header::{CONTENT_LENGTH, RANGE};
 use reqwest::StatusCode;
 use tauri::AppHandle;
 use tauri::Manager; // 提供 try_state 方法
+use tokio::sync::Mutex; // 用于 final_path 的互斥锁
 
 use super::engine::TaskController;
 use super::progress;
@@ -62,6 +63,9 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             full_path.to_string_lossy().to_string()
         }
     };
+
+    // 将最终路径写入控制器，供外部删除使用
+    *controller.final_path.lock().await = Some(download_dir.clone());
 
     log::info!("任务 {} 开始下载，文件路径: {}", ctx.task_id, download_dir);
 

@@ -1,4 +1,6 @@
 use std::collections::{HashMap, VecDeque};
+use std::fs;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,6 +19,8 @@ pub struct TaskController {
     pub url_ready: Arc<Notify>,
     /// 取消时是否需要删除文件
     pub delete_file_on_cancel: Arc<AtomicBool>,
+    /// 下载线程确定的最终文件路径（供外部删除使用）
+    pub final_path: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Clone)]
@@ -50,7 +54,7 @@ impl DownloadEngine {
         url: String,
         save_path: String,
         quality: String,
-        filename: String,   // 新增参数
+        filename: String,
         key: String,
         file_size: u64,
         song_title: String,
@@ -63,6 +67,7 @@ impl DownloadEngine {
             resume_notify: Arc::new(Notify::new()),
             url_ready: Arc::new(Notify::new()),
             delete_file_on_cancel: Arc::new(AtomicBool::new(false)),
+            final_path: Arc::new(Mutex::new(None)),
         };
 
         let ctx = TaskContext {
@@ -70,7 +75,7 @@ impl DownloadEngine {
             url,
             save_path,
             quality,
-            quality_filename: filename,   // 存入上下文
+            quality_filename: filename,
             key,
             file_size,
             downloaded_offset: 0,
@@ -125,13 +130,14 @@ impl DownloadEngine {
         }
     }
 
-    /// 取消任务：设置取消标志，同时标记是否需要删除文件
+    /// 取消任务（下载线程自行处理文件删除）
     pub async fn cancel(&self, task_id: &str, delete_file: bool) {
         log::info!("取消任务 {} (delete_file={})", task_id, delete_file);
         if let Some(ctrl) = self.active_controllers.lock().await.get(task_id) {
             ctrl.cancel_token.cancel();
             // 将删除意图传递给下载线程
-            ctrl.delete_file_on_cancel.store(delete_file, Ordering::SeqCst);
+            ctrl.delete_file_on_cancel
+                .store(delete_file, Ordering::SeqCst);
             // 如果任务处于暂停等待状态，需要唤醒它以便退出循环
             ctrl.resume_notify.notify_one();
             ctrl.url_ready.notify_one();
@@ -179,6 +185,7 @@ impl DownloadEngine {
                         resume_notify: c.resume_notify.clone(),
                         url_ready: c.url_ready.clone(),
                         delete_file_on_cancel: c.delete_file_on_cancel.clone(),
+                        final_path: c.final_path.clone(),
                     })
                 };
 
@@ -198,6 +205,28 @@ impl DownloadEngine {
             }
 
             self.scheduler_notify.notified().await;
+        }
+    }
+
+    /// 移除任务记录（由前端手动删除任务时调用）
+    /// 删除文件直接从控制器记录的最终路径中获取，不再依赖前端传入
+    pub async fn remove(&self, task_id: &str, delete_file: bool) {
+        // 先清理队列中的残留（如果存在）
+        self.pending_tasks.lock().await.retain(|t| t.task_id != task_id);
+        self.ready_tasks.lock().await.retain(|t| t.task_id != task_id);
+
+        let ctrl = self.active_controllers.lock().await.remove(task_id);
+        if let Some(ctrl) = ctrl {
+            if delete_file {
+                let path_guard = ctrl.final_path.lock().await;
+                if let Some(p) = path_guard.as_ref() {
+                    if let Err(e) = fs::remove_file(p) {
+                        log::error!("删除文件失败 {}: {}", p, e);
+                    } else {
+                        log::info!("已删除文件: {}", p);
+                    }
+                }
+            }
         }
     }
 }

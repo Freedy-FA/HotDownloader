@@ -54,7 +54,7 @@ export function renderActions(
         )
     }
 
-    // 错误：重试、删除（删除任务记录，不再提示删除文件）
+    // 错误：重试、删除（删除时询问是否删除未完成文件）
     if (task.status === 'error') {
         const isRetriable =
             task.errorMsg !== '重试次数已用尽' &&
@@ -75,21 +75,18 @@ export function renderActions(
             )
         )
         nodes.push(
-            h(
-                NPopconfirm,
-                {
-                    onPositiveClick: () => emit('remove', taskId),
-                },
-                {
-                    trigger: () =>
-                        h(NButton, { size: 'small', type: 'error' }, () => '删除'),
-                    default: () => '确定删除该任务记录吗？',
-                }
+            createRemoveWithDeletePopconfirm(
+                task,
+                emit,
+                taskId,
+                '确定删除该任务记录吗？',
+                '同时删除未下载完成的文件',
+                true // 默认勾选，因为错误文件通常无保留价值
             )
         )
     }
 
-    // 已完成：打开文件位置、删除（删除任务记录，不删除已下载文件）
+    // 已完成：打开文件位置、删除（删除时询问是否删除已下载文件）
     if (task.status === 'completed') {
         nodes.push(
             h(
@@ -102,16 +99,13 @@ export function renderActions(
             )
         )
         nodes.push(
-            h(
-                NPopconfirm,
-                {
-                    onPositiveClick: () => emit('remove', taskId),
-                },
-                {
-                    trigger: () =>
-                        h(NButton, { size: 'small', type: 'error' }, () => '删除'),
-                    default: () => '确定删除该任务记录吗？',
-                }
+            createRemoveWithDeletePopconfirm(
+                task,
+                emit,
+                taskId,
+                '确定删除该任务记录吗？',
+                '同时删除已下载的文件',
+                false // 默认不勾选，保护已下载文件
             )
         )
     }
@@ -120,14 +114,13 @@ export function renderActions(
 }
 
 /**
- * 创建带“删除文件”选项的取消确认弹窗
+ * 创建带“删除文件”选项的取消确认弹窗（用于 waiting/paused 状态）
  */
 function createCancelWithDeletePopconfirm(
     task: TaskRecord,
     emit: TaskActionContext['emit'],
     taskId: string
 ) {
-    // 使用响应式 ref，确保复选框状态实时更新
     const deleteFile = ref(false)
 
     return h(
@@ -152,6 +145,54 @@ function createCancelWithDeletePopconfirm(
                             },
                         },
                         () => '同时删除未下载完成的文件'
+                    ),
+                ])
+            },
+        }
+    )
+}
+
+/**
+ * 创建带“删除文件”选项的删除确认弹窗（用于 error/completed 状态）
+ * @param task 任务记录
+ * @param emit 事件发射器
+ * @param taskId 任务 ID
+ * @param confirmText 确认提示语
+ * @param checkboxLabel 复选框标签
+ * @param defaultChecked 复选框默认是否勾选
+ */
+function createRemoveWithDeletePopconfirm(
+    task: TaskRecord,
+    emit: TaskActionContext['emit'],
+    taskId: string,
+    confirmText: string,
+    checkboxLabel: string,
+    defaultChecked: boolean
+) {
+    const deleteFile = ref(defaultChecked)
+
+    return h(
+        NPopconfirm,
+        {
+            onPositiveClick: () => {
+                emit('remove', taskId, { deleteFile: deleteFile.value })
+            },
+        },
+        {
+            trigger: () =>
+                h(NButton, { size: 'small', type: 'error' }, () => '删除'),
+            default: () => {
+                return h(NSpace, { vertical: true, size: 'small' }, () => [
+                    h('span', {}, confirmText),
+                    h(
+                        NCheckbox,
+                        {
+                            checked: deleteFile.value,
+                            'onUpdate:checked': (val: boolean) => {
+                                deleteFile.value = val
+                            },
+                        },
+                        () => checkboxLabel
                     ),
                 ])
             },

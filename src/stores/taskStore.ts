@@ -87,7 +87,13 @@ export const useTaskStore = defineStore('tasks', () => {
         saveTasks()
     }
 
-    function removeTask(taskId: string) {
+    // 移除任务，不再传递 filePath，后端自行获取
+    async function removeTask(taskId: string, deleteFile: boolean = false) {
+        try {
+            await invoke('remove_task', { taskId, deleteFile });
+        } catch (e) {
+            console.error('remove_task 失败:', e);
+        }
         tasks.value = tasks.value.filter((t) => t.id !== taskId)
         saveTasks()
     }

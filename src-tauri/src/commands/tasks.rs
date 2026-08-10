@@ -19,7 +19,7 @@ pub async fn add_download_task(
     url: String,
     save_path: String,
     quality: String,
-    filename: String,   // 品质文件名
+    filename: String,
     key: String,
     file_size: u64,
     song_title: String,
@@ -64,6 +64,17 @@ pub async fn resume_task(app: AppHandle, task_id: String) -> Result<(), String> 
 pub async fn cancel_task(app: AppHandle, task_id: String, delete_file: bool) -> Result<(), String> {
     let engine = app.state::<DownloadEngine>().clone();
     engine.cancel(&task_id, delete_file).await;
+    Ok(())
+}
+
+#[command]
+pub async fn remove_task(
+    app: AppHandle,
+    task_id: String,
+    delete_file: bool,
+) -> Result<(), String> {
+    let engine = app.state::<DownloadEngine>().clone();
+    engine.remove(&task_id, delete_file).await;
     Ok(())
 }
 

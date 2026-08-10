@@ -70,7 +70,7 @@ async function handleAction(action: string, taskId: string, extra?: any) {
             await retryTask(taskId)
             break
         case 'remove':
-            taskStore.removeTask(taskId)
+            taskStore.removeTask(taskId, extra?.deleteFile === true)
             break
         case 'open-location': {
             const task = taskStore.tasks.find((t) => t.id === taskId)
@@ -88,7 +88,7 @@ async function handleAction(action: string, taskId: string, extra?: any) {
     selectedRowKeys.value = selectedRowKeys.value.filter((id) => id !== taskId)
 }
 
-async function handleBatchClear() {
+async function handleBatchClear(deleteFile: boolean) {
     const ids = selectedRowKeys.value.slice()
     for (const taskId of ids) {
         const task = taskStore.tasks.find((t) => t.id === taskId)
@@ -98,10 +98,10 @@ async function handleBatchClear() {
             task.status === 'downloading' ||
             task.status === 'paused'
         ) {
-            // 批量清除暂时默认不删除文件，可通过扩展实现
-            taskStore.cancelTask(taskId, false)
+            taskStore.cancelTask(taskId, deleteFile)
         } else {
-            taskStore.removeTask(taskId)
+            // removeTask 现在接受 deleteFile 参数
+            await taskStore.removeTask(taskId, deleteFile)
         }
     }
     selectedRowKeys.value = []
