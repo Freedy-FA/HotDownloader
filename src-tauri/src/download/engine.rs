@@ -74,7 +74,7 @@ impl DownloadEngine {
             song_id,
             url,
             save_path,
-            quality,
+            quality: quality.clone(), // 保留原 quality 字段
             quality_filename: filename,
             key,
             file_size,
@@ -84,6 +84,7 @@ impl DownloadEngine {
                 title: song_title,
                 artist,
                 album,
+                quality, // 传入品质
             },
         };
 

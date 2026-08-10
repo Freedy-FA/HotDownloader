@@ -8,8 +8,6 @@ use futures_util::StreamExt;
 use reqwest::header::{CONTENT_LENGTH, RANGE};
 use reqwest::StatusCode;
 use tauri::AppHandle;
-use tauri::Manager; // 提供 try_state 方法
-use tokio::sync::Mutex; // 用于 final_path 的互斥锁
 
 use super::engine::TaskController;
 use super::progress;
@@ -22,6 +20,7 @@ pub struct SongInfo {
     pub title: String,
     pub artist: String,
     pub album: String,
+    pub quality: String, // 新增：品质标签
 }
 
 /// 单个任务的上下文信息
@@ -35,6 +34,7 @@ pub struct TaskContext {
     pub key: String,
     pub file_size: u64,
     pub downloaded_offset: u64,
+    #[allow(dead_code)] // 抑制未使用警告，保留备用
     pub app_handle: AppHandle,
     pub song_info: SongInfo,
     pub quality_filename: String,
@@ -67,8 +67,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
         } else {
             let (dir, template) = get_download_settings(&app_handle).await;
             let song = &ctx.song_info;
-            let fname = filename::build_filename(&template, song);
-            // 从品质文件名中提取扩展名，若无法提取则回退为 "flac"
+            let fname = filename::build_filename(&template, song); // 现在 song 包含 quality
             let raw_ext = Path::new(&ctx.quality_filename)
                 .extension()
                 .and_then(|s| s.to_str())
@@ -133,7 +132,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             if metadata.len() < downloaded {
                 // 文件被截断或损坏，清空文件并从头下载
                 drop(f); // 先关闭文件，避免占用
-                let mut new_file = OpenOptions::new()
+                let new_file = OpenOptions::new()
                     .write(true)
                     .create(true)
                     .truncate(true)
@@ -158,7 +157,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
         } else {
             // 无法获取元数据，保守起见改为从头下载
             drop(f);
-            let mut new_file = OpenOptions::new()
+            let new_file = OpenOptions::new()
                 .write(true)
                 .create(true)
                 .truncate(true)
