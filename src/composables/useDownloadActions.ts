@@ -1,6 +1,6 @@
 import { h, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { useDialog } from 'naive-ui'
+import { useDialog, useNotification } from 'naive-ui'
 import type { Quality, SongInfo, QualityItem } from '../types'
 import { QUALITY_DOWNGRADE_ORDER } from '../types'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -11,6 +11,7 @@ import QualitySelector from '../components/search/QualitySelector.vue'
 export function useDownloadActions() {
     const dialog = useDialog()
     const router = useRouter()
+    const notification = useNotification()
     const settingsStore = useSettingsStore()
     const taskStore = useTaskStore()
 
@@ -75,115 +76,23 @@ export function useDownloadActions() {
         song: SongInfo,
         forceQuality?: Quality
     ): Promise<void> {
-        let quality: Quality
-        if (forceQuality) {
-            quality = forceQuality
-        } else if (settingsStore.settings.defaultQuality === 'ask') {
-            try {
-                quality = await askQuality(song.qualities)
-            } catch {
-                return
-            }
-        } else {
-            quality = settingsStore.settings.defaultQuality
-        }
-
-        const resolved = resolveQualityForSong(song, quality)
-        if (!resolved) {
-            // 直接创建错误任务
-            const taskId = generateTaskId()
-            taskStore.addTask({
-                id: taskId,
-                songId: song.id,
-                songTitle: song.title,
-                artist: song.artist,
-                album: song.album,
-                coverUrl: song.coverUrl,
-                mediaMid: song.mediaMid,
-                filename: '',
-                quality,
-                status: 'error',
-                errorMsg: '所选音质不可用',
-                fileSize: 0,
-                downloaded: 0,
-                retryCount: 0,
-                addedAt: Date.now(),
-            })
-            return
-        }
-
-        const taskId = generateTaskId()
-        taskStore.addTask({
-            id: taskId,
-            songId: song.id,
-            songTitle: song.title,
-            artist: song.artist,
-            album: song.album,
-            coverUrl: song.coverUrl,
-            mediaMid: song.mediaMid,
-            filename: resolved.filename,
-            quality: resolved.quality,
-            status: 'waiting',
-            fileSize: resolved.size,
-            downloaded: 0,
-            retryCount: 0,
-            addedAt: Date.now(),
-        })
-
-        if (settingsStore.settings.jumpToTask) {
-            router.push('/task')
-        }
-    }
-
-    async function batchDownload(songs: SongInfo[]): Promise<void> {
-        let quality: Quality
-        if (settingsStore.settings.defaultQuality === 'ask') {
-            // 取所有歌曲品质的并集作为选项
-            const unionMap = new Map<string, QualityItem>()
-            for (const song of songs) {
-                for (const q of song.qualities) {
-                    if (!unionMap.has(q.quality)) {
-                        unionMap.set(q.quality, q)
-                    }
+        try {
+            let quality: Quality
+            if (forceQuality) {
+                quality = forceQuality
+            } else if (settingsStore.settings.defaultQuality === 'ask') {
+                try {
+                    quality = await askQuality(song.qualities)
+                } catch {
+                    return
                 }
+            } else {
+                quality = settingsStore.settings.defaultQuality
             }
-            const unionQualities = Array.from(unionMap.values())
-            if (unionQualities.length === 0) {
-                // 所有歌曲都没有可用品质，直接创建错误任务
-                for (const song of songs) {
-                    const taskId = generateTaskId()
-                    taskStore.addTask({
-                        id: taskId,
-                        songId: song.id,
-                        songTitle: song.title,
-                        artist: song.artist,
-                        album: song.album,
-                        coverUrl: song.coverUrl,
-                        mediaMid: song.mediaMid,
-                        filename: '',
-                        quality: '',
-                        status: 'error',
-                        errorMsg: '无可用音质',
-                        fileSize: 0,
-                        downloaded: 0,
-                        retryCount: 0,
-                        addedAt: Date.now(),
-                    })
-                }
-                return
-            }
-            try {
-                quality = await askQuality(unionQualities)
-            } catch {
-                return
-            }
-        } else {
-            quality = settingsStore.settings.defaultQuality
-        }
 
-        for (const song of songs) {
             const resolved = resolveQualityForSong(song, quality)
             if (!resolved) {
+                // 直接创建错误任务
                 const taskId = generateTaskId()
                 taskStore.addTask({
                     id: taskId,
@@ -202,7 +111,8 @@ export function useDownloadActions() {
                     retryCount: 0,
                     addedAt: Date.now(),
                 })
-                continue
+                notification.warning({ title: '下载提示', description: `歌曲“${song.title}”无可用音质“${quality}”，已将任务标记为错误` })
+                return
             }
 
             const taskId = generateTaskId()
@@ -222,10 +132,119 @@ export function useDownloadActions() {
                 retryCount: 0,
                 addedAt: Date.now(),
             })
-        }
 
-        if (settingsStore.settings.jumpToTask) {
-            router.push('/task')
+            if (settingsStore.settings.jumpToTask) {
+                router.push('/task')
+            }
+        } catch (e: any) {
+            console.error('下载失败:', e)
+            notification.error({ title: '下载失败', description: e?.message || String(e) })
+        }
+    }
+
+    async function batchDownload(songs: SongInfo[]): Promise<void> {
+        try {
+            let quality: Quality
+            if (settingsStore.settings.defaultQuality === 'ask') {
+                // 取所有歌曲品质的并集作为选项
+                const unionMap = new Map<string, QualityItem>()
+                for (const song of songs) {
+                    for (const q of song.qualities) {
+                        if (!unionMap.has(q.quality)) {
+                            unionMap.set(q.quality, q)
+                        }
+                    }
+                }
+                const unionQualities = Array.from(unionMap.values())
+                if (unionQualities.length === 0) {
+                    // 所有歌曲都没有可用品质，直接创建错误任务
+                    for (const song of songs) {
+                        const taskId = generateTaskId()
+                        taskStore.addTask({
+                            id: taskId,
+                            songId: song.id,
+                            songTitle: song.title,
+                            artist: song.artist,
+                            album: song.album,
+                            coverUrl: song.coverUrl,
+                            mediaMid: song.mediaMid,
+                            filename: '',
+                            quality: '',
+                            status: 'error',
+                            errorMsg: '无可用音质',
+                            fileSize: 0,
+                            downloaded: 0,
+                            retryCount: 0,
+                            addedAt: Date.now(),
+                        })
+                    }
+                    notification.warning({ title: '批量下载', description: '所选歌曲均无可用的音质' })
+                    return
+                }
+                try {
+                    quality = await askQuality(unionQualities)
+                } catch {
+                    return
+                }
+            } else {
+                quality = settingsStore.settings.defaultQuality
+            }
+
+            let errorCount = 0
+            for (const song of songs) {
+                const resolved = resolveQualityForSong(song, quality)
+                if (!resolved) {
+                    const taskId = generateTaskId()
+                    taskStore.addTask({
+                        id: taskId,
+                        songId: song.id,
+                        songTitle: song.title,
+                        artist: song.artist,
+                        album: song.album,
+                        coverUrl: song.coverUrl,
+                        mediaMid: song.mediaMid,
+                        filename: '',
+                        quality,
+                        status: 'error',
+                        errorMsg: '所选音质不可用',
+                        fileSize: 0,
+                        downloaded: 0,
+                        retryCount: 0,
+                        addedAt: Date.now(),
+                    })
+                    errorCount++
+                    continue
+                }
+
+                const taskId = generateTaskId()
+                taskStore.addTask({
+                    id: taskId,
+                    songId: song.id,
+                    songTitle: song.title,
+                    artist: song.artist,
+                    album: song.album,
+                    coverUrl: song.coverUrl,
+                    mediaMid: song.mediaMid,
+                    filename: resolved.filename,
+                    quality: resolved.quality,
+                    status: 'waiting',
+                    fileSize: resolved.size,
+                    downloaded: 0,
+                    retryCount: 0,
+                    addedAt: Date.now(),
+                })
+            }
+
+            if (errorCount > 0) {
+                notification.warning({ title: '批量下载', description: `${errorCount} 首歌曲无可用音质，已标记为错误` })
+            }
+
+            if (settingsStore.settings.jumpToTask) {
+                router.push('/task')
+            }
+        } catch (e: any) {
+            console.error('批量下载失败:', e)
+            notification.error({ title: '批量下载失败', description: e?.message || String(e) })
         }
     }
 
@@ -234,7 +253,9 @@ export function useDownloadActions() {
         if (!task || task.status !== 'error') return
 
         const canRetry = taskStore.retryTask(taskId)
-        if (!canRetry) return
+        if (!canRetry) {
+            notification.warning({ title: '重试失败', description: '任务无法重试，已达最大尝试次数或无可降级音质' })
+        }
     }
 
     return {

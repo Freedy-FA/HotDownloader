@@ -16,6 +16,9 @@ import { useSettingsStore } from './settingsStore'
 export const useTaskStore = defineStore('tasks', () => {
     const tasks = ref<TaskRecord[]>([])
 
+    // 简易全局通知辅助函数
+    const notify = () => (window as any).$notify
+
     // ---- 持久化加载 ----
     async function loadTasks() {
         try {
@@ -38,8 +41,9 @@ export const useTaskStore = defineStore('tasks', () => {
                 tasks.value = parsed
                 await saveTasks()
             }
-        } catch {
-            tasks.value = []
+        } catch (e: any) {
+            console.error('加载任务失败:', e)
+            notify()?.error({ title: '加载任务失败', description: e?.message || String(e) })
         }
     }
 
@@ -48,8 +52,9 @@ export const useTaskStore = defineStore('tasks', () => {
             await invoke('save_tasks', {
                 tasksJson: JSON.stringify(tasks.value),
             })
-        } catch (e) {
+        } catch (e: any) {
             console.error('保存任务失败:', e)
+            notify()?.error({ title: '保存任务失败', description: e?.message || String(e) })
         }
     }
 
@@ -69,12 +74,18 @@ export const useTaskStore = defineStore('tasks', () => {
             songTitle: task.songTitle,
             artist: task.artist,
             album: task.album,
-        }).catch(console.error)
+        }).catch((e: any) => {
+            console.error('添加任务失败:', e)
+            notify()?.error({ title: '添加任务失败', description: e?.message || String(e) })
+        })
     }
 
     function cancelTask(taskId: string, deleteFile?: boolean) {
         invoke('cancel_task', { taskId, deleteFile: deleteFile ?? false })
-            .catch(console.error)
+            .catch((e: any) => {
+                console.error('取消任务失败:', e)
+                notify()?.error({ title: '取消任务失败', description: e?.message || String(e) })
+            })
         tasks.value = tasks.value.filter((t) => t.id !== taskId)
         saveTasks()
     }
@@ -83,19 +94,28 @@ export const useTaskStore = defineStore('tasks', () => {
     async function removeTask(taskId: string, deleteFile: boolean = false) {
         try {
             await invoke('remove_task', { taskId, deleteFile })
-        } catch (e) {
-            console.error('remove_task 失败:', e)
+        } catch (e: any) {
+            console.error('移除任务失败:', e)
+            notify()?.error({ title: '移除任务失败', description: e?.message || String(e) })
         }
         tasks.value = tasks.value.filter((t) => t.id !== taskId)
         saveTasks()
     }
 
     function enqueueTask(taskId: string, offset: number) {
-        invoke('enqueue_task', { taskId, offset }).catch(console.error)
+        invoke('enqueue_task', { taskId, offset })
+            .catch((e: any) => {
+                console.error('重新入队失败:', e)
+                notify()?.error({ title: '重新入队失败', description: e?.message || String(e) })
+            })
     }
 
     function pauseTask(taskId: string) {
-        invoke('pause_task', { taskId }).catch(console.error)
+        invoke('pause_task', { taskId })
+            .catch((e: any) => {
+                console.error('暂停任务失败:', e)
+                notify()?.error({ title: '暂停任务失败', description: e?.message || String(e) })
+            })
         const task = tasks.value.find((t) => t.id === taskId)
         if (task && task.status === 'downloading') {
             task.status = 'paused'
@@ -104,7 +124,11 @@ export const useTaskStore = defineStore('tasks', () => {
     }
 
     function resumeTask(taskId: string) {
-        invoke('resume_task', { taskId }).catch(console.error)
+        invoke('resume_task', { taskId })
+            .catch((e: any) => {
+                console.error('恢复任务失败:', e)
+                notify()?.error({ title: '恢复任务失败', description: e?.message || String(e) })
+            })
         const task = tasks.value.find((t) => t.id === taskId)
         if (task && task.status === 'paused') {
             task.status = 'downloading'
@@ -191,6 +215,11 @@ export const useTaskStore = defineStore('tasks', () => {
             task.status = 'error'
             task.errorMsg = event.payload.error_msg
             saveTasks()
+            // 弹出错误通知
+            notify()?.error({
+                title: '下载失败',
+                description: `歌曲“${task.songTitle}”错误：${event.payload.error_msg}`,
+            })
         })
 
         listen<DownloadLinkExpiredPayload>('download-link-expired', (event) => {
@@ -198,9 +227,13 @@ export const useTaskStore = defineStore('tasks', () => {
             if (!task) return
             task.status = 'error'
             task.errorMsg = '链接过期'
-            // 保留 current_offset
             task.downloaded = event.payload.current_offset
             saveTasks()
+            // 弹出链接过期通知
+            notify()?.warning({
+                title: '链接过期',
+                description: `歌曲“${task.songTitle}”下载链接过期，请稍后重试`,
+            })
         })
     }
 

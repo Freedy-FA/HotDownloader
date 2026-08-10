@@ -27,7 +27,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { NMenu, type MenuOption } from 'naive-ui'
+import { NMenu, useNotification, type MenuOption } from 'naive-ui'
 import { useCloseGuard } from '../composables/useCloseGuard'
 
 const router = useRouter()
@@ -35,6 +35,10 @@ const route = useRoute()
 
 // 在 n-dialog-provider 内部调用，确保 useDialog 正常工作
 useCloseGuard()
+
+// 挂载通知实例到全局，供 store 使用
+const notification = useNotification()
+    ; (window as any).$notify = notification
 
 const isNarrow = ref(false)
 
