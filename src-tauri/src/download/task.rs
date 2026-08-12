@@ -78,6 +78,19 @@ fn is_retryable_network_error(err: &reqwest::Error) -> bool {
     err.is_timeout() || err.is_connect() || (err.is_request() && !err.is_body())
 }
 
+/// 等待暂停恢复，返回 true 表示任务已被取消，应退出下载循环
+async fn wait_for_resume_async(controller: &TaskController) -> bool {
+    loop {
+        controller.resume_notify.notified().await;
+        if !controller.pause_flag.load(Ordering::SeqCst) {
+            return false; // 恢复
+        }
+        if controller.cancel_token.is_cancelled() {
+            return true; // 取消
+        }
+    }
+}
+
 /// 实际执行下载的函数
 pub async fn download_task(ctx: TaskContext, controller: TaskController, app_handle: AppHandle) {
     // 1. 构建最终保存路径（只需一次）
@@ -136,11 +149,10 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             break 'download;
         }
 
-        // 初始暂停等待（任务刚创建时可能处于暂停状态）
+        // 初始暂停等待（使用统一的辅助函数）
         while controller.pause_flag.load(Ordering::SeqCst) {
-            controller.resume_notify.notified().await;
-            if controller.cancel_token.is_cancelled() {
-                break 'download;
+            if wait_for_resume_async(&controller).await {
+                break 'download; // 任务被取消
             }
         }
 
@@ -399,16 +411,11 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 
         // 内部循环结束后的处理
         if controller.pause_flag.load(Ordering::SeqCst) {
-            // 暂停恢复处理
-            loop {
-                controller.resume_notify.notified().await;
-                if !controller.pause_flag.load(Ordering::SeqCst) {
-                    break;
-                }
-                if controller.cancel_token.is_cancelled() {
-                    break 'download;
-                }
+            // 因暂停跳出，等待恢复
+            if wait_for_resume_async(&controller).await {
+                break 'download; // 被取消
             }
+            // 恢复后需要重新获取链接，清空 url 与 key，并释放当前文件句柄
             url.clear();
             key.clear();
             file = None;
@@ -444,7 +451,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
     }
 }
 
-/// 辅助函数
+// ==================== 辅助函数 ====================
 
 /// 获取下载目录（绝对路径）及文件命名模板
 pub(crate) async fn get_download_settings(app_handle: &AppHandle) -> (String, String) {
