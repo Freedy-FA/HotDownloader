@@ -252,7 +252,7 @@ export function useDownloadActions() {
         const task = taskStore.tasks.find((t) => t.id === taskId)
         if (!task || task.status !== 'error') return
 
-        const canRetry = taskStore.retryTask(taskId)
+        const canRetry = await taskStore.retryTask(taskId)  // 现在等待结果
         if (!canRetry) {
             notification.warning({ title: '重试失败', description: '任务无法重试，已达最大尝试次数或无可降级音质' })
         }

@@ -101,12 +101,23 @@ export const useTaskStore = defineStore('tasks', () => {
         saveTasks()
     }
 
-    function enqueueTask(taskId: string, offset: number) {
-        invoke('enqueue_task', { taskId, offset })
-            .catch((e: any) => {
-                console.error('重新入队失败:', e)
-                notify()?.error({ title: '重新入队失败', description: e?.message || String(e), duration: 3000 })
-            })
+    // 现在 enqueueTask 等待后端结果，并处理错误
+    async function enqueueTask(taskId: string, offset: number): Promise<boolean> {
+        try {
+            await invoke('enqueue_task', { taskId, offset })
+            return true
+        } catch (e: any) {
+            console.error('重新入队失败:', e)
+            notify()?.error({ title: '重新入队失败', description: e?.message || String(e), duration: 3000 })
+            // 将任务恢复为 error 状态
+            const task = tasks.value.find((t) => t.id === taskId)
+            if (task && task.status === 'waiting') {
+                task.status = 'error'
+                task.errorMsg = '启动下载失败，请稍后重试'
+                await saveTasks()
+            }
+            return false
+        }
     }
 
     function pauseTask(taskId: string) {
@@ -136,11 +147,11 @@ export const useTaskStore = defineStore('tasks', () => {
     }
 
     /**
-     * 重试 / 降级逻辑
+     * 重试 / 降级逻辑，等待 enqueue 结果
      * 返回 true 表示可继续重试（调用方需重新获取链接）
      * 返回 false 表示已永久失败，不可再重试
      */
-    function retryTask(taskId: string): boolean {
+    async function retryTask(taskId: string): Promise<boolean> {
         const task = tasks.value.find((t) => t.id === taskId)
         if (!task || task.status !== 'error') return false
 
@@ -157,22 +168,30 @@ export const useTaskStore = defineStore('tasks', () => {
                     task.downloaded = 0 // 文件不同，必须重新下载
                 } else {
                     task.errorMsg = '已无更低音质可降级'
-                    saveTasks()
+                    await saveTasks()
                     return false
                 }
             } else {
                 task.errorMsg = '重试次数已用尽'
-                saveTasks()
+                await saveTasks()
                 return false
             }
         }
 
         task.status = 'waiting'
-        if (!task.errorMsg) {
-            task.errorMsg = undefined
+        // 清除旧错误信息
+        task.errorMsg = undefined
+        await saveTasks()
+
+        const success = await enqueueTask(taskId, task.downloaded)
+        if (!success) {
+            // enqueueTask 内部已将状态设为 error，但需确保错误信息正确
+            const t = tasks.value.find((t) => t.id === taskId)
+            if (t && t.status === 'error' && !t.errorMsg) {
+                t.errorMsg = '启动下载失败'
+            }
+            return false
         }
-        saveTasks()
-        enqueueTask(taskId, task.downloaded)
         return true
     }
 
