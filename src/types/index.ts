@@ -65,6 +65,7 @@ export interface TaskRecord {
     downloaded: number
     retryCount: number
     addedAt: number
+    speed?: number  // 实时下载速度 (bytes/s)，仅 downloading/paused 状态有意义
 }
 
 export interface DownloadProgressPayload {

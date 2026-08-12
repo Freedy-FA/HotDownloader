@@ -211,6 +211,7 @@ export const useTaskStore = defineStore('tasks', () => {
             if (!task) return
             task.downloaded = event.payload.downloaded
             task.fileSize = event.payload.total
+            task.speed = event.payload.speed   // 保存速度
             // 如果任务尚未处于 downloading，则切换为 downloading
             if (task.status !== 'downloading') {
                 task.status = 'downloading'

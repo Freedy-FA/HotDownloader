@@ -22,6 +22,62 @@ const emit = defineEmits<{
     (e: 'action', action: string, taskId: string, extra?: Record<string, any>): void
 }>()
 
+/**
+ * 格式化速度 (bytes/s) 为人类可读字符串
+ */
+function formatSpeed(bytesPerSec: number): string {
+    if (bytesPerSec === 0) return ''
+    const units = ['B/s', 'KB/s', 'MB/s', 'GB/s']
+    let unitIndex = 0
+    let value = bytesPerSec
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024
+        unitIndex++
+    }
+    return `${value.toFixed(1)} ${units[unitIndex]}`
+}
+
+/**
+ * 渲染进度列
+ */
+function renderProgress(row: TaskRecord) {
+    const percent = row.fileSize > 0 ? Math.round((row.downloaded / row.fileSize) * 100) : 0
+
+    // 已完成状态
+    if (row.status === 'completed') {
+        return '100%'
+    }
+
+    // 错误状态显示错误信息
+    if (row.status === 'error') {
+        return row.errorMsg || ''
+    }
+
+    // 等待中
+    if (row.status === 'waiting') {
+        return '-'
+    }
+
+    // 下载中或暂停：显示进度条和速度
+    const children = [
+        h(NProgress, {
+            percentage: percent,
+            indicatorTextPlacement: 'inside',
+            height: 20,
+        })
+    ]
+
+    if (row.speed && row.speed > 0) {
+        children.push(
+            h('div', { style: { fontSize: '12px', color: 'var(--n-text-color-3)', marginTop: '4px' } },
+                formatSpeed(row.speed)
+            )
+        )
+    }
+
+    return h('div', null, children)
+}
+
 const columns: DataTableColumn<TaskRecord>[] = [
     {
         type: 'selection',
@@ -65,23 +121,9 @@ const columns: DataTableColumn<TaskRecord>[] = [
     {
         title: '进度',
         key: 'progress',
-        width: 180,
+        width: 200,
         render(row: TaskRecord) {
-            if (row.status === 'completed') {
-                return '100%'
-            }
-            if (row.status === 'downloading' || row.status === 'paused') {
-                const percent = row.fileSize > 0 ? Math.round((row.downloaded / row.fileSize) * 100) : 0
-                return h(NProgress, {
-                    percentage: percent,
-                    indicatorTextPlacement: 'inside',
-                    height: 20,
-                })
-            }
-            if (row.status === 'error') {
-                return row.errorMsg || ''
-            }
-            return '-'
+            return renderProgress(row)
         },
     },
     {

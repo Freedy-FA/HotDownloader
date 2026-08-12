@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -342,6 +343,9 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
         let mut last_downloaded = downloaded;
         let mut should_retry_stream = false;
 
+        // 速度平滑：保存最近 5 次采样的速度值（B/s）
+        let mut speed_samples: VecDeque<u64> = VecDeque::with_capacity(5);
+
         // 内部流读取循环
         loop {
             // 检查取消
@@ -392,12 +396,25 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             let now = Instant::now();
             let elapsed = now - last_report;
             if elapsed >= Duration::from_millis(500) {
-                let speed = if elapsed.as_secs_f64() > 0.0 {
+                // 计算瞬时速度
+                let instant_speed = if elapsed.as_secs_f64() > 0.0 {
                     ((downloaded - last_downloaded) as f64 / elapsed.as_secs_f64()) as u64
                 } else {
                     0
                 };
-                progress::emit_progress(&app_handle, &ctx.task_id, downloaded, total, speed);
+
+                // 加入采样队列并计算移动平均
+                speed_samples.push_back(instant_speed);
+                if speed_samples.len() > 5 {
+                    speed_samples.pop_front();
+                }
+                let avg_speed = if speed_samples.is_empty() {
+                    0
+                } else {
+                    speed_samples.iter().sum::<u64>() / speed_samples.len() as u64
+                };
+
+                progress::emit_progress(&app_handle, &ctx.task_id, downloaded, total, avg_speed);
                 last_report = now;
                 last_downloaded = downloaded;
             }
