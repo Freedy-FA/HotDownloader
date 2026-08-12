@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 
 use super::engine::TaskController;
 use super::progress;
-use crate::commands::api;
+use crate::commands::api::{self, CLIENT}; // 引用全局客户端
 use crate::utils::{crypto, filename};
 
 /// 歌曲信息，用于生成文件名
@@ -75,7 +75,7 @@ async fn fetch_download_link_with_retry(
 
 /// 判断错误是否属于可重试的网络类错误
 fn is_retryable_network_error(err: &reqwest::Error) -> bool {
-    err.is_timeout() || err.is_connect() || err.is_request() && !err.is_body()
+    err.is_timeout() || err.is_connect() || (err.is_request() && !err.is_body())
 }
 
 /// 实际执行下载的函数
@@ -124,6 +124,10 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
     // 5. 文件句柄（在循环外保持，续传时在循环内打开）
     //    声明为 Option 以便在暂停恢复时重新打开文件。
     let mut file: Option<fs::File> = None;
+
+    // 流错误重试计数器（防止无限重试）
+    let mut stream_retries: u32 = 0;
+    const MAX_STREAM_RETRIES: u32 = 2;
 
     // 下载循环
     'download: loop {
@@ -210,9 +214,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                                     .create(true)
                                     .truncate(true)
                                     .open(&download_dir)
-                                    .map_err(|e| {
-                                        log::error!("文件重置失败: {}", e);
-                                    })
+                                    .map_err(|e| log::error!("文件重置失败: {}", e))
                                     .ok();
                                 if new_f.is_none() {
                                     progress::emit_error(
@@ -235,9 +237,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                                 .create(true)
                                 .truncate(true)
                                 .open(&download_dir)
-                                .map_err(|e| {
-                                    log::error!("文件重置失败: {}", e);
-                                })
+                                .map_err(|e| log::error!("文件重置失败: {}", e))
                                 .ok();
                             if new_f.is_none() {
                                 progress::emit_error(&app_handle, &ctx.task_id, "文件异常，请重试");
@@ -258,14 +258,9 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
         }
 
         // 发起下载请求（带网络重试）
-        let client = reqwest::Client::builder()
-            .user_agent("HotDownloader/1.0")
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-
         let mut attempt = 0;
         let response = loop {
-            let mut request = client.get(&url).header("Referer", "https://y.qq.com");
+            let mut request = CLIENT.get(&url).header("Referer", "https://y.qq.com");
 
             if downloaded > 0 {
                 request = request.header(RANGE, format!("bytes={}-", downloaded));
@@ -333,6 +328,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
         let mut stream = response.bytes_stream();
         let mut last_report = Instant::now();
         let mut last_downloaded = downloaded;
+        let mut should_retry_stream = false;
 
         // 内部流读取循环
         loop {
@@ -343,7 +339,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 
             // 检查暂停：如果暂停，跳出内部循环，回到外层重新请求
             if controller.pause_flag.load(Ordering::SeqCst) {
-                break;
+                break; // 暂停跳出内部循环
             }
 
             let chunk_result = stream.next().await;
@@ -351,13 +347,16 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                 Some(Ok(bytes)) => bytes,
                 Some(Err(e)) => {
                     log::error!("任务 {} 读取流错误: {}", ctx.task_id, e);
-                    progress::emit_error(&app_handle, &ctx.task_id, "网络错误，请稍后重试");
-                    break 'download;
-                }
-                None => {
-                    // 流正常结束，跳出内部循环去发送完成事件
+                    // 如果还未超过流错误重试次数，标记为重试并跳出内部循环
+                    if stream_retries < MAX_STREAM_RETRIES {
+                        stream_retries += 1;
+                        should_retry_stream = true;
+                    } else {
+                        progress::emit_error(&app_handle, &ctx.task_id, "网络错误，请稍后重试");
+                    }
                     break;
                 }
+                None => break, // 流正常结束
             };
 
             // 转换为可变的 Vec<u8>
@@ -398,9 +397,9 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             }
         }
 
-        // 内部循环结束的原因判断
+        // 内部循环结束后的处理
         if controller.pause_flag.load(Ordering::SeqCst) {
-            // 因暂停跳出，等待恢复通知
+            // 暂停恢复处理
             loop {
                 controller.resume_notify.notified().await;
                 if !controller.pause_flag.load(Ordering::SeqCst) {
@@ -410,14 +409,22 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                     break 'download;
                 }
             }
-            // 恢复后需要重新获取链接，清空 url 与 key，并释放当前文件句柄
+            url.clear();
+            key.clear();
+            file = None;
+            continue 'download;
+        }
+
+        // 如果是因为流错误触发的重试
+        if should_retry_stream {
+            // 重新获取链接，避免旧链接过期
             url.clear();
             key.clear();
             file = None; // 关闭文件，下次循环重新打开
             continue 'download;
         }
 
-        // 不是暂停（流结束、完成等），跳出外层循环
+        // 其他情况，直接退出
         break 'download;
     }
 
@@ -436,6 +443,8 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
         }
     }
 }
+
+/// 辅助函数
 
 /// 获取下载目录（绝对路径）及文件命名模板
 pub(crate) async fn get_download_settings(app_handle: &AppHandle) -> (String, String) {

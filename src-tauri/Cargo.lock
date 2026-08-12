@@ -1388,6 +1388,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "log",
+ "once_cell",
  "open",
  "reqwest",
  "serde",

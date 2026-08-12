@@ -1,14 +1,23 @@
+use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 use std::path::Path;
 use tauri::command;
 use url::Url;
 
+/// 全局复用 HTTP 客户端，启用连接池、超时等
+pub(crate) static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .user_agent("HotDownloader/1.0")
+        .timeout(std::time::Duration::from_secs(30)) // 整体请求超时
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("Failed to create HTTP client")
+});
+
 /// 搜索歌曲，返回 JSON 数组字符串（扩展 SongInfo，增加 mediaMid 和 qualities）
 /// https://github.com/lyswhut/lx-music-desktop/blob/9c364b482e5621a1d38b50e8610d2fb974457e6e/src/renderer/utils/musicSdk/tx/musicSearch.js#L13
 #[command]
 pub async fn search_songs(keyword: String, page: u32, limit: u32) -> Result<String, String> {
-    let client = reqwest::Client::new();
-
     let searchid = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -66,9 +75,8 @@ pub async fn search_songs(keyword: String, page: u32, limit: u32) -> Result<Stri
     });
 
     // 发送 POST 请求
-    let resp = client
+    let resp = CLIENT
         .post("https://u.y.qq.com/cgi-bin/musicu.fcg")
-        .header("User-Agent", "HotDownloader/1.0")
         .header("Content-Type", "application/json")
         .json(&request_body)
         .send()
@@ -239,11 +247,10 @@ fn build_qualities(file: &Value, vs: &Value) -> Vec<Value> {
 
     list
 }
+
 /// 加密文件（.mgg / .mflac）专用，同时获取 purl 和 ekey
 /// https://github.com/chrisdong/FileHub/blob/e1d752e1f29f877b7c895ae5aaff32a179fad051/root/importURLs/lxmusic/HeiMusic%E8%81%9A%E5%90%88%E6%BA%90_v1.1.5.js#L287
 async fn fetch_encrypted_link(song_id: &str, filename: &str) -> Result<(String, String), String> {
-    let client = reqwest::Client::new();
-
     let request_body = json!({
         "comm": {
             "ct": "19",
@@ -274,10 +281,9 @@ async fn fetch_encrypted_link(song_id: &str, filename: &str) -> Result<(String, 
         }
     });
 
-    let resp = client
+    let resp = CLIENT
         .post("https://ut.y.qq.com/cgi-bin/musicu.fcg")
         .header("Content-Type", "application/json")
-        .header("User-Agent", "HotDownloader/1.0")
         .json(&request_body)
         .send()
         .await
@@ -330,8 +336,6 @@ async fn fetch_encrypted_link(song_id: &str, filename: &str) -> Result<(String, 
 /// 非加密文件专用，仅获取 purl，无需密钥
 /// https://github.com/lyswhut/lx-music-source/blob/55eb9881dad6ca895505352f3a0a7d1dfa3444e0/src/apis/tx.js#L30
 async fn fetch_plain_link(song_id: &str, filename: &str) -> Result<(String, String), String> {
-    let client = reqwest::Client::new();
-
     let request_body = json!({
         "comm": {
             "ct": 24,
@@ -351,10 +355,9 @@ async fn fetch_plain_link(song_id: &str, filename: &str) -> Result<(String, Stri
         }
     });
 
-    let resp = client
+    let resp = CLIENT
         .post("https://u.y.qq.com/cgi-bin/musicu.fcg")
         .header("Content-Type", "application/json")
-        .header("User-Agent", "HotDownloader/1.0")
         .json(&request_body)
         .send()
         .await
@@ -435,8 +438,6 @@ pub async fn fetch_download_link(song_id: String, filename: String) -> Result<St
 /// https://github.com/lyswhut/lx-music-desktop/blob/9c364b482e5621a1d38b50e8610d2fb974457e6e/src/renderer/utils/musicSdk/tx/hotSearch.js#L15
 #[command]
 pub async fn fetch_hot_keywords() -> Result<String, String> {
-    let client = reqwest::Client::new();
-
     let request_body = json!({
         "comm": {
             "ct": "19",
@@ -462,9 +463,8 @@ pub async fn fetch_hot_keywords() -> Result<String, String> {
         }
     });
 
-    let resp = client
+    let resp = CLIENT
         .post("https://u.y.qq.com/cgi-bin/musicu.fcg")
-        .header("User-Agent", "HotDownloader/1.0")
         .header("Content-Type", "application/json")
         .header("Referer", "https://y.qq.com/portal/player.html")
         .json(&request_body)
@@ -508,8 +508,6 @@ pub async fn fetch_hot_keywords() -> Result<String, String> {
 /// https://github.com/lyswhut/lx-music-desktop/blob/9c364b482e5621a1d38b50e8610d2fb974457e6e/src/renderer/utils/musicSdk/tx/tipSearch.js#L10
 #[command]
 pub async fn fetch_suggestions(keyword: String) -> Result<String, String> {
-    let client = reqwest::Client::new();
-
     // 构建 URL，并进行 URL 编码
     let base_url = "http://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg";
     let url = Url::parse_with_params(
@@ -529,7 +527,7 @@ pub async fn fetch_suggestions(keyword: String) -> Result<String, String> {
     )
     .map_err(|e| format!("URL 构建失败: {}", e))?;
 
-    let resp = client
+    let resp = CLIENT
         .get(url)
         .header("Referer", "https://y.qq.com/portal/player.html")
         .header("Accept", "*/*")
