@@ -225,6 +225,12 @@ export const useTaskStore = defineStore('tasks', () => {
             task.filePath = event.payload.final_path
             task.downloaded = task.fileSize
             saveTasks()
+            // 成功通知
+            notify()?.success({
+                title: '下载完成',
+                description: `歌曲“${task.songTitle}”已下载完成`,
+                duration: 3000
+            })
         })
 
         listen<DownloadErrorPayload>('download-error', (event) => {
