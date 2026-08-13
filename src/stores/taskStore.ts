@@ -91,14 +91,35 @@ export const useTaskStore = defineStore('tasks', () => {
 
     // 移除任务，不再传递 filePath，后端自行获取
     async function removeTask(taskId: string, deleteFile: boolean = false) {
-        try {
-            await invoke('remove_task', { taskId, deleteFile })
-        } catch (e: any) {
-            console.error('移除任务失败:', e)
-            notify()?.error({ title: '移除任务失败', description: e?.message || String(e), duration: 3000 })
+        const task = tasks.value.find((t) => t.id === taskId)
+        if (deleteFile && task) {
+            const settingsStore = useSettingsStore()
+            const isSaf = settingsStore.settings.downloadDir === 'saf://'
+            if (isSaf && task.filePath) {
+                try {
+                    await invoke('delete_saf_file', { uri: task.filePath })
+                } catch (e: any) {
+                    console.error('删除 SAF 文件失败:', e)
+                    notify()?.error({ title: '删除文件失败', description: e?.message || String(e), duration: 3000 })
+                }
+            } else {
+                try {
+                    await invoke('remove_task', { taskId, deleteFile: true })
+                } catch (e: any) {
+                    console.error('移除任务失败:', e)
+                    notify()?.error({ title: '移除任务失败', description: e?.message || String(e), duration: 3000 })
+                }
+            }
+        } else {
+            try {
+                await invoke('remove_task', { taskId, deleteFile: false })
+            } catch (e: any) {
+                console.error('移除任务失败:', e)
+                notify()?.error({ title: '移除任务失败', description: e?.message || String(e), duration: 3000 })
+            }
         }
         tasks.value = tasks.value.filter((t) => t.id !== taskId)
-        saveTasks()
+        await saveTasks()
     }
 
     // 现在 enqueueTask 等待后端结果，并处理错误
@@ -219,12 +240,16 @@ export const useTaskStore = defineStore('tasks', () => {
             saveTasks()
         })
 
+        // 监听下载完成
         listen<DownloadCompletedPayload>('download-completed', (event) => {
             const task = tasks.value.find((t) => t.id === event.payload.task_id)
             if (!task) return
+
             task.status = 'completed'
+            // SAF 模式下 final_path 已经是完整 URI，无需额外处理
             task.filePath = event.payload.final_path
             task.downloaded = task.fileSize
+
             saveTasks()
             // 成功通知
             notify()?.success({

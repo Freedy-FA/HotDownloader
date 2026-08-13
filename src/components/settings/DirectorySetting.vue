@@ -7,16 +7,28 @@
             </n-input-group>
         </template>
         <template v-else>
-            <n-select :value="settingsStore.settings.downloadDir" :options="presetDirs" @update:value="onSelectDir"
-                placeholder="请选择下载目录" />
+            <div class="android-dir-setting">
+                <n-button type="primary" @click="selectSafFolder">
+                    选择 SAF 文件夹
+                </n-button>
+                <div class="current-dir">
+                    <n-text v-if="settingsStore.settings.safFolderName" type="info">
+                        当前 SAF 文件夹：{{ settingsStore.settings.safFolderName }}
+                    </n-text>
+                    <n-text v-else depth="3">
+                        默认下载目录：{{ settingsStore.settings.downloadDir }}
+                    </n-text>
+                </div>
+            </div>
         </template>
     </n-form-item>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { NFormItem, NInput, NInputGroup, NButton, NSelect } from 'naive-ui'
+import { ref, onMounted } from 'vue'
+import { NFormItem, NInput, NInputGroup, NButton, NText } from 'naive-ui'
 import { open } from '@tauri-apps/plugin-dialog'
+import { invoke } from '@tauri-apps/api/core'
 import { useSettingsStore } from '../../stores/settingsStore'
 
 const settingsStore = useSettingsStore()
@@ -24,20 +36,12 @@ const settingsStore = useSettingsStore()
 // 简单平台判断
 const isAndroid = ref(navigator.userAgent.toLowerCase().includes('android'))
 
-// Android 端预设公共目录
-const presetDirs = [
-    { label: '下载 (Download)', value: '/storage/emulated/0/Download' },
-    { label: '音乐 (Music)', value: '/storage/emulated/0/Music' },
-    { label: '电影 (Movies)', value: '/storage/emulated/0/Movies' },
-    { label: '图片 (Pictures)', value: '/storage/emulated/0/Pictures' },
-    { label: '文档 (Documents)', value: '/storage/emulated/0/Documents' },
-]
-
-function onSelectDir(value: string | null) {
-    if (value) {
-        settingsStore.settings.downloadDir = value
+// Android 端初始化：若未选择 SAF，则确保使用默认下载目录
+onMounted(async () => {
+    if (isAndroid.value && !settingsStore.settings.safFolderUri) {
+        await settingsStore.getDefaultDownloadDir()
     }
-}
+})
 
 // 桌面端目录选择
 async function selectDirectory() {
@@ -55,4 +59,39 @@ async function selectDirectory() {
         console.error('选择目录失败:', error)
     }
 }
+
+async function selectSafFolder() {
+    try {
+        const json = await invoke<string>('pick_saf_folder')
+        if (!json) {
+            console.log('用户取消选择 SAF 文件夹')
+            return
+        }
+        // 存储完整 JSON
+        settingsStore.settings.safFolderUri = json
+
+        // 解析 JSON 获取 URI 最后一段作为显示名称
+        try {
+            const parsed = JSON.parse(json)
+            settingsStore.settings.safFolderName = parsed.uri.split('/').pop() || parsed.uri
+        } catch {
+            settingsStore.settings.safFolderName = 'SAF 文件夹'
+        }
+        settingsStore.settings.downloadDir = 'saf://'
+    } catch (error) {
+        console.error('选择 SAF 文件夹失败:', error)
+    }
+}
 </script>
+
+<style scoped>
+.android-dir-setting {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.current-dir {
+    font-size: 13px;
+}
+</style>

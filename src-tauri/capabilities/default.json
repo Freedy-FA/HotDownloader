@@ -12,6 +12,7 @@
     "dialog:default",
     "store:default",
     "log:default",
+    "android-fs:default",
     "opener:default"
   ]
 }

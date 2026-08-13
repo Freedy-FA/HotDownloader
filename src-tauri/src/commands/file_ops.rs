@@ -7,6 +7,8 @@ use tauri::AppHandle;
 
 #[cfg(target_os = "linux")]
 use open;
+#[cfg(target_os = "android")]
+use tauri_plugin_android_fs::{AndroidFsExt, FsUri};
 
 /// 获取系统默认下载目录路径（内部实现）
 pub(crate) fn get_default_download_dir_impl(app: &AppHandle) -> String {
@@ -56,10 +58,9 @@ pub fn open_file_location(app: AppHandle, path: String) -> Result<(), String> {
     {
         use tauri_plugin_opener::OpenerExt;
         log::info!("Android 打开文件：{}", path);
-        app.opener().open_path(&path, None::<&str>).map_err(|e| {
-            log::error!("打开文件失败: {}", e);
-            e.to_string()
-        })?;
+        app.opener()
+            .open_path(&path, None::<&str>)
+            .map_err(|e| e.to_string())?;
         return Ok(());
     }
 
@@ -110,4 +111,51 @@ pub fn open_file_location(app: AppHandle, path: String) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// 选择 SAF 文件夹（仅 Android）
+#[command]
+pub fn pick_saf_folder(app: AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    {
+        let api = app.android_fs();
+        let picker = api.picker();
+
+        // 选择目录
+        let uri_opt = picker
+            .pick_dir(None, true) // 第二个参数 local_only = true
+            .map_err(|e| e.to_string())?;
+
+        if let Some(uri) = uri_opt {
+            // 持久化权限，使应用重启后仍可访问该目录
+            picker
+                .persist_uri_permission(&uri)
+                .map_err(|e| format!("持久化权限失败: {}", e))?;
+
+            // 返回完整 FsUri JSON（包含 document_top_tree_uri）
+            uri.to_json_string().map_err(|e| e.to_string())
+        } else {
+            // 用户取消选择
+            Ok(String::new())
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Err("当前平台不支持 SAF".to_string())
+    }
+}
+
+/// 删除 SAF 文件（仅 Android）
+#[command]
+pub fn delete_saf_file(app: AppHandle, uri: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        let api = app.android_fs();
+        let fs_uri = FsUri::from_uri(uri);
+        api.remove_file(&fs_uri).map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Err("当前平台不支持 SAF".to_string())
+    }
 }

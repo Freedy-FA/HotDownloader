@@ -41,6 +41,7 @@ umc_qmc = { path = "../libs/um_crypto/um_crypto/qmc" }
 open = "5.4.1"
 once_cell = "1.21.4"
 tauri-plugin-opener = "2.5.4"
+tauri-plugin-android-fs = "29.0.0"
 
 [profile.dev]
 incremental = true # 以较小的步骤编译您的二进制文件。

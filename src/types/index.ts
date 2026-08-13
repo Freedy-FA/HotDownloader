@@ -29,6 +29,9 @@ export interface Settings {
     namingTemplate: string
     maxConcurrent: number
     jumpToTask: boolean
+    // 新增 SAF 文件夹 URI 和名称
+    safFolderUri?: string
+    safFolderName?: string
 }
 
 /** 歌曲可用的单个品质项 */
@@ -78,6 +81,7 @@ export interface DownloadProgressPayload {
 export interface DownloadCompletedPayload {
     task_id: string
     final_path: string
+    saf_folder_uri?: string | null
 }
 
 export interface DownloadErrorPayload {

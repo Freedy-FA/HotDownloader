@@ -17,6 +17,7 @@ pub struct DownloadProgressPayload {
 pub struct DownloadCompletedPayload {
     pub task_id: String,
     pub final_path: String,
+    pub saf_folder_uri: Option<String>,
 }
 
 #[derive(Serialize, Clone)]

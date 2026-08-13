@@ -10,6 +10,7 @@ use futures_util::StreamExt;
 use reqwest::header::{CONTENT_LENGTH, RANGE};
 use reqwest::StatusCode;
 use tauri::AppHandle;
+use tauri_plugin_android_fs::{AndroidFsExt, FileAccessMode, FsUri};
 use tokio::sync::Mutex;
 
 use super::engine::TaskController;
@@ -95,21 +96,31 @@ async fn wait_for_resume_async(controller: &TaskController) -> bool {
 /// 实际执行下载的函数
 pub async fn download_task(ctx: TaskContext, controller: TaskController, app_handle: AppHandle) {
     // 1. 构建最终保存路径（只需一次）
-    let download_dir = {
+    let (is_saf, download_dir, saf_folder_uri) = {
         if !ctx.save_path.is_empty() {
-            ctx.save_path.clone()
+            (false, ctx.save_path.clone(), None)
         } else {
-            let (dir, template) = get_download_settings(&app_handle).await;
-            let song = &ctx.song_info;
-            let fname = filename::build_filename(&template, song); // 现在 song 包含 quality
-            let raw_ext = Path::new(&ctx.quality_filename)
-                .extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("flac");
-            // 映射解密后的扩展名
-            let ext = map_decrypted_extension(raw_ext);
-            let full_path = Path::new(&dir).join(format!("{}.{}", fname, ext));
-            full_path.to_string_lossy().to_string()
+            let (dir, template, saf_uri) = get_download_settings(&app_handle).await;
+            if dir == "saf://" && cfg!(target_os = "android") && saf_uri.is_some() {
+                let fname = filename::build_filename(&template, &ctx.song_info);
+                let raw_ext = Path::new(&ctx.quality_filename)
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("flac");
+                let ext = map_decrypted_extension(raw_ext);
+                let file_name = format!("{}.{}", fname, ext);
+                (true, file_name, saf_uri)
+            } else {
+                let fname = filename::build_filename(&template, &ctx.song_info);
+                let raw_ext = Path::new(&ctx.quality_filename)
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("flac");
+                // 映射解密后的扩展名
+                let ext = map_decrypted_extension(raw_ext);
+                let full_path = Path::new(&dir).join(format!("{}.{}", fname, ext));
+                (false, full_path.to_string_lossy().to_string(), None)
+            }
         }
     };
 
@@ -138,6 +149,8 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
     // 5. 文件句柄（在循环外保持，续传时在循环内打开）
     //    声明为 Option 以便在暂停恢复时重新打开文件。
     let mut file: Option<fs::File> = None;
+
+    let mut saf_file_uri: Option<String> = None;
 
     // 流错误重试计数器（防止无限重试）
     let mut stream_retries: u32 = 0;
@@ -191,83 +204,190 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 
         // 打开/续传文件
         if file.is_none() {
-            let f = if downloaded == 0 {
-                match OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(&download_dir)
-                {
-                    Ok(f) => f,
+            let f = if is_saf {
+                // SAF 模式
+                let api = app_handle.android_fs();
+
+                // 解析父目录 FsUri（包含 document_top_tree_uri）
+                let parent_uri = match FsUri::from_json_str(saf_folder_uri.as_ref().unwrap()) {
+                    Ok(uri) => uri,
                     Err(e) => {
-                        log::error!("文件创建失败: {}", e);
-                        progress::emit_error(
-                            &app_handle,
-                            &ctx.task_id,
-                            "文件创建失败，请检查磁盘空间",
-                        );
+                        log::error!("解析 SAF 文件夹 URI 失败: {}", e);
+                        progress::emit_error(&app_handle, &ctx.task_id, "SAF 配置错误");
                         break 'download;
+                    }
+                };
+
+                // download_dir 此时是文件名
+                let file_path = std::path::Path::new(&download_dir);
+
+                // 尝试解析已存在的文件
+                let existing_file_uri = api.resolve_file_uri(&parent_uri, file_path).ok();
+
+                match existing_file_uri {
+                    Some(file_uri) => {
+                        // 文件已存在，记录最终文件 URI
+                        saf_file_uri = Some(file_uri.uri.clone());
+
+                        if downloaded > 0 {
+                            // 续传模式：打开文件并 seek 到偏移量
+                            match api.open_file(&file_uri, FileAccessMode::ReadWrite) {
+                                Ok(mut f) => {
+                                    use std::io::Seek;
+                                    if let Err(e) = f.seek(std::io::SeekFrom::Start(downloaded)) {
+                                        log::error!("SAF 文件 seek 失败: {}", e);
+                                        progress::emit_error(
+                                            &app_handle,
+                                            &ctx.task_id,
+                                            "文件定位失败",
+                                        );
+                                        break 'download;
+                                    }
+                                    Some(f)
+                                }
+                                Err(e) => {
+                                    log::error!("SAF 打开文件失败: {}", e);
+                                    progress::emit_error(&app_handle, &ctx.task_id, "无法打开文件");
+                                    break 'download;
+                                }
+                            }
+                        } else {
+                            // 从头开始：截断文件
+                            match api.open_file_writable(&file_uri) {
+                                Ok(f) => Some(f),
+                                Err(e) => {
+                                    log::error!("SAF 打开文件失败: {}", e);
+                                    progress::emit_error(&app_handle, &ctx.task_id, "无法打开文件");
+                                    break 'download;
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        // 文件不存在，创建新文件
+                        match api.create_new_file(&parent_uri, file_path, None) {
+                            Ok(file_uri) => {
+                                saf_file_uri = Some(file_uri.uri.clone());
+                                // 新文件，重置偏移量
+                                if downloaded > 0 {
+                                    downloaded = 0;
+                                }
+                                match api.open_file_writable(&file_uri) {
+                                    Ok(f) => Some(f),
+                                    Err(e) => {
+                                        log::error!("SAF 打开新文件失败: {}", e);
+                                        progress::emit_error(
+                                            &app_handle,
+                                            &ctx.task_id,
+                                            "无法打开文件",
+                                        );
+                                        break 'download;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                log::error!("SAF 创建文件失败: {}", e);
+                                progress::emit_error(&app_handle, &ctx.task_id, "无法创建文件");
+                                break 'download;
+                            }
+                        }
                     }
                 }
             } else {
-                // 续传任务，先以追加模式打开
-                match OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&download_dir)
-                {
-                    Ok(f) => {
-                        // 校验文件大小：如果文件长度小于期望的偏移，说明文件异常，重置下载
-                        if let Ok(meta) = f.metadata() {
-                            if meta.len() < downloaded {
-                                // 文件被截断或损坏，清空文件并从头下载
-                                drop(f); // 先关闭文件，避免占用
-                                let new_f = OpenOptions::new()
+                // 普通模式：原有逻辑
+                if downloaded == 0 {
+                    match OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .truncate(true)
+                        .open(&download_dir)
+                    {
+                        Ok(f) => Some(f),
+                        Err(e) => {
+                            log::error!("文件创建失败: {}", e);
+                            progress::emit_error(
+                                &app_handle,
+                                &ctx.task_id,
+                                "文件创建失败，请检查磁盘空间",
+                            );
+                            break 'download;
+                        }
+                    }
+                } else {
+                    // 续传任务，先以追加模式打开
+                    match OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&download_dir)
+                    {
+                        Ok(f) => {
+                            // 校验文件大小：如果文件长度小于期望的偏移，说明文件异常，重置下载
+                            if let Ok(meta) = f.metadata() {
+                                if meta.len() < downloaded {
+                                    // 文件被截断或损坏，清空文件并从头下载
+                                    drop(f); // 先关闭文件，避免占用
+                                    match OpenOptions::new()
+                                        .write(true)
+                                        .create(true)
+                                        .truncate(true)
+                                        .open(&download_dir)
+                                    {
+                                        Ok(new_f) => {
+                                            downloaded = 0;
+                                            Some(new_f)
+                                        }
+                                        Err(e) => {
+                                            log::error!("文件重置失败: {}", e);
+                                            progress::emit_error(
+                                                &app_handle,
+                                                &ctx.task_id,
+                                                "文件异常，请重试",
+                                            );
+                                            break 'download;
+                                        }
+                                    }
+                                } else {
+                                    Some(f)
+                                }
+                            } else {
+                                // 无法获取元数据，保守起见改为从头下载
+                                drop(f);
+                                match OpenOptions::new()
                                     .write(true)
                                     .create(true)
                                     .truncate(true)
                                     .open(&download_dir)
-                                    .map_err(|e| log::error!("文件重置失败: {}", e))
-                                    .ok();
-                                if new_f.is_none() {
-                                    progress::emit_error(
-                                        &app_handle,
-                                        &ctx.task_id,
-                                        "文件异常，请重试",
-                                    );
-                                    break 'download;
+                                {
+                                    Ok(new_f) => {
+                                        downloaded = 0;
+                                        Some(new_f)
+                                    }
+                                    Err(e) => {
+                                        log::error!("文件重置失败: {}", e);
+                                        progress::emit_error(
+                                            &app_handle,
+                                            &ctx.task_id,
+                                            "文件异常，请重试",
+                                        );
+                                        break 'download;
+                                    }
                                 }
-                                downloaded = 0;
-                                new_f.unwrap()
-                            } else {
-                                f
                             }
-                        } else {
-                            // 无法获取元数据，保守起见改为从头下载
-                            drop(f);
-                            let new_f = OpenOptions::new()
-                                .write(true)
-                                .create(true)
-                                .truncate(true)
-                                .open(&download_dir)
-                                .map_err(|e| log::error!("文件重置失败: {}", e))
-                                .ok();
-                            if new_f.is_none() {
-                                progress::emit_error(&app_handle, &ctx.task_id, "文件异常，请重试");
-                                break 'download;
-                            }
-                            downloaded = 0;
-                            new_f.unwrap()
                         }
-                    }
-                    Err(e) => {
-                        log::error!("文件打开失败: {}", e);
-                        progress::emit_error(&app_handle, &ctx.task_id, "文件访问失败");
-                        break 'download;
+                        Err(e) => {
+                            log::error!("文件打开失败: {}", e);
+                            progress::emit_error(&app_handle, &ctx.task_id, "文件访问失败");
+                            break 'download;
+                        }
                     }
                 }
             };
-            file = Some(f);
+
+            if let Some(f) = f {
+                file = Some(f);
+            } else {
+                break 'download;
+            }
         }
 
         // 发起下载请求（带网络重试）
@@ -321,7 +441,17 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 
         let status = response.status();
         if status == StatusCode::RANGE_NOT_SATISFIABLE {
-            progress::emit_completed(&app_handle, &ctx.task_id, &download_dir);
+            let final_display_path = if is_saf {
+                saf_file_uri.clone().unwrap_or_else(|| download_dir.clone())
+            } else {
+                download_dir.clone()
+            };
+            progress::emit_completed(
+                &app_handle,
+                &ctx.task_id,
+                &final_display_path,
+                saf_folder_uri.clone(),
+            );
             break 'download;
         }
 
@@ -421,7 +551,18 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 
             if total > 0 && downloaded >= total {
                 log::info!("下载完成: {}", download_dir);
-                progress::emit_completed(&app_handle, &ctx.task_id, &download_dir);
+                // 完成时发送事件，SAF 模式下 final_path 改为完整 URI
+                let final_display_path = if is_saf {
+                    saf_file_uri.clone().unwrap_or_else(|| download_dir.clone())
+                } else {
+                    download_dir.clone()
+                };
+                progress::emit_completed(
+                    &app_handle,
+                    &ctx.task_id,
+                    &final_display_path,
+                    saf_folder_uri.clone(),
+                );
                 break 'download;
             }
         }
@@ -471,7 +612,9 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 // ==================== 辅助函数 ====================
 
 /// 获取下载目录（绝对路径）及文件命名模板
-pub(crate) async fn get_download_settings(app_handle: &AppHandle) -> (String, String) {
+pub(crate) async fn get_download_settings(
+    app_handle: &AppHandle,
+) -> (String, String, Option<String>) {
     use crate::storage::store_wrapper;
 
     let default_dir = crate::commands::file_ops::get_default_download_dir_impl(app_handle);
@@ -492,12 +635,21 @@ pub(crate) async fn get_download_settings(app_handle: &AppHandle) -> (String, St
     let dir = if dir.contains("/data/user/0/") || dir.contains("/data/data/") {
         log::warn!("检测到应用私有目录路径，已回退为默认下载目录: {}", dir);
         default_dir
-    } else if Path::new(&dir).is_absolute() {
+    } else if Path::new(&dir).is_absolute() || dir == "saf://" {
         dir
     } else {
-        log::warn!("下载目录不是绝对路径，已回退为默认下载目录: {}", default_dir);
+        log::warn!(
+            "下载目录不是绝对路径，已回退为默认下载目录: {}",
+            default_dir
+        );
         default_dir
     };
+
+    let saf_folder_uri = settings
+        .get("safFolderUri")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
 
     let template = settings
         .get("namingTemplate")
@@ -505,7 +657,7 @@ pub(crate) async fn get_download_settings(app_handle: &AppHandle) -> (String, St
         .unwrap_or(&default_template)
         .to_string();
 
-    (dir, template)
+    (dir, template, saf_folder_uri)
 }
 
 /// 将加密文件扩展名映射为解密后的真实扩展名
