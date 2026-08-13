@@ -11,6 +11,8 @@ import type { DataTableColumn } from 'naive-ui'
 import type { TaskRecord } from '../../types'
 import { renderActions } from './TaskRowActions'
 
+const isAndroid = navigator.userAgent.toLowerCase().includes('android')
+
 const props = defineProps<{
     tasks: TaskRecord[]
     selectedRowKeys: string[]
@@ -126,6 +128,27 @@ const columns: DataTableColumn<TaskRecord>[] = [
             return renderProgress(row)
         },
     },
+    // 仅 Android 显示文件路径列
+    ...(isAndroid ? [{
+        title: '文件路径',
+        key: 'filePath',
+        minWidth: 200,
+        render(row: TaskRecord) {
+            // 紧凑显示：仅显示文件名，完整路径使用 tooltip
+            const fullPath = row.filePath || ''
+            const fileName = fullPath.split('/').pop() || fullPath || '-'
+            return h('span', {
+                style: {
+                    fontSize: '12px',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    cursor: 'default',
+                },
+                title: fullPath, // 原生 tooltip 显示完整路径
+            }, fileName)
+        },
+    }] : []),
     {
         title: '操作',
         key: 'actions',
@@ -137,6 +160,7 @@ const columns: DataTableColumn<TaskRecord>[] = [
                     emit: (action: string, taskId: string, extra?: Record<string, any>) => {
                         emit('action', action, taskId, extra)
                     },
+                    isAndroid, // 传入平台标识
                 })
             )
         },

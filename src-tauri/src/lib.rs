@@ -16,6 +16,7 @@ pub fn run() {
             .build())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let engine = DownloadEngine::new(app.handle().clone());
             let max_concurrent = match store_wrapper::load_string(app.handle(), "settings") {

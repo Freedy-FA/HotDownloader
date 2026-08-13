@@ -474,7 +474,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 pub(crate) async fn get_download_settings(app_handle: &AppHandle) -> (String, String) {
     use crate::storage::store_wrapper;
 
-    let default_dir = get_default_download_dir();
+    let default_dir = crate::commands::file_ops::get_default_download_dir_impl(app_handle);
     let default_template = "{song} - {artist}".to_string();
 
     let settings_json = store_wrapper::load_string(app_handle, "settings").unwrap_or_default();
@@ -488,14 +488,14 @@ pub(crate) async fn get_download_settings(app_handle: &AppHandle) -> (String, St
         .map(|s| s.to_string())
         .unwrap_or_else(|| default_dir.clone());
 
-    // 确保目录路径是绝对路径，否则回退到默认下载目录
-    let dir = if Path::new(&dir).is_absolute() {
+    // 过滤无效路径（Android 应用私有目录）
+    let dir = if dir.contains("/data/user/0/") || dir.contains("/data/data/") {
+        log::warn!("检测到应用私有目录路径，已回退为默认下载目录: {}", dir);
+        default_dir
+    } else if Path::new(&dir).is_absolute() {
         dir
     } else {
-        log::warn!(
-            "下载目录不是绝对路径，已回退为默认下载目录: {}",
-            default_dir
-        );
+        log::warn!("下载目录不是绝对路径，已回退为默认下载目录: {}", default_dir);
         default_dir
     };
 
@@ -506,19 +506,6 @@ pub(crate) async fn get_download_settings(app_handle: &AppHandle) -> (String, St
         .to_string();
 
     (dir, template)
-}
-
-/// 获取系统默认下载目录，失败时使用临时目录（确保绝对路径）
-fn get_default_download_dir() -> String {
-    if let Some(d) = dirs::download_dir() {
-        return d.to_string_lossy().to_string();
-    }
-    if let Some(home) = dirs::home_dir() {
-        let fallback = home.join("Downloads");
-        return fallback.to_string_lossy().to_string();
-    }
-    // 最终回退到临时目录
-    std::env::temp_dir().to_string_lossy().to_string()
 }
 
 /// 将加密文件扩展名映射为解密后的真实扩展名

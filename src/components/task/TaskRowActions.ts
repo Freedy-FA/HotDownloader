@@ -4,13 +4,14 @@ import type { TaskRecord } from '../../types'
 
 export interface TaskActionContext {
     emit: (action: string, taskId: string, extra?: Record<string, any>) => void
+    isAndroid?: boolean
 }
 
 export function renderActions(
     task: TaskRecord,
     context: TaskActionContext
 ): VNode[] {
-    const { emit } = context
+    const { emit, isAndroid = false } = context
     const taskId = task.id
     const nodes: VNode[] = []
 
@@ -87,16 +88,18 @@ export function renderActions(
 
     // 已完成：打开文件位置、删除（删除时询问是否删除已下载文件）
     if (task.status === 'completed') {
-        nodes.push(
-            h(
-                NButton,
-                {
-                    size: 'small',
-                    onClick: () => emit('open-location', taskId),
-                },
-                () => '打开文件位置'
+        if (!isAndroid) {
+            nodes.push(
+                h(
+                    NButton,
+                    {
+                        size: 'small',
+                        onClick: () => emit('open-location', taskId),
+                    },
+                    () => '打开文件位置'
+                )
             )
-        )
+        }
         nodes.push(
             createRemoveWithDeletePopconfirm(
                 emit,
