@@ -6,7 +6,7 @@
 
 <script setup lang="ts">
 import { h } from 'vue'
-import { NDataTable, NTag, NProgress, NSpace } from 'naive-ui'
+import { NDataTable, NTag, NProgress, NSpace, NEllipsis } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
 import type { TaskRecord } from '../../types'
 import { renderActions } from './TaskRowActions'
@@ -134,19 +134,16 @@ const columns: DataTableColumn<TaskRecord>[] = [
         key: 'filePath',
         minWidth: 200,
         render(row: TaskRecord) {
-            // 紧凑显示：仅显示文件名，完整路径使用 tooltip
-            const fullPath = row.filePath || ''
-            const fileName = fullPath.split('/').pop() || fullPath || '-'
-            return h('span', {
+            const fullPath = row.filePath || '-'
+            return h(NEllipsis, {
                 style: {
                     fontSize: '12px',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    cursor: 'default',
+                    maxWidth: '300px',
                 },
-                title: fullPath, // 原生 tooltip 显示完整路径
-            }, fileName)
+                expandTrigger: 'click',
+                lineClamp: 1,
+                tooltip: false, // 禁用 tooltip，改用点击展开
+            }, () => fullPath)
         },
     }] : []),
     {
