@@ -191,7 +191,9 @@ function onBatchDownload() {
 .search-view {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    /* 防止底部导航遮挡 */
+    min-height: 100%;
+    padding-bottom: 0;
 }
 
 .loading-wrapper {
