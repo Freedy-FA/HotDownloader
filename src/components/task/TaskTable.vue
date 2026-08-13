@@ -1,17 +1,41 @@
 <template>
-    <n-data-table :columns="columns" :data="tasks" :row-key="(row: TaskRecord) => row.id"
+    <MobileTaskList v-if="isMobile" :tasks="tasks" :selected-row-keys="selectedRowKeys" :is-android="isAndroid"
+        @update:selected-row-keys="(keys) => emit('update:selectedRowKeys', keys)"
+        @action="(action, taskId, extra) => emit('action', action, taskId, extra)" />
+    <n-data-table v-else :columns="columns" :data="tasks" :row-key="(row: TaskRecord) => row.id"
         :checked-row-keys="(selectedRowKeys as any)"
         @update:checked-row-keys="(keys: any[]) => $emit('update:selectedRowKeys', keys as string[])" />
 </template>
 
 <script setup lang="ts">
-import { h } from 'vue'
+import { h, ref, onMounted, onUnmounted } from 'vue'
 import { NDataTable, NTag, NProgress, NSpace, NEllipsis } from 'naive-ui'
 import type { DataTableColumn } from 'naive-ui'
 import type { TaskRecord } from '../../types'
 import { renderActions } from './TaskRowActions'
+import MobileTaskList from './MobileTaskList.vue'
 
 const isAndroid = navigator.userAgent.toLowerCase().includes('android')
+
+// 响应式检测移动端
+const isMobile = ref(false)
+let mediaQuery: MediaQueryList | null = null
+
+function updateMobileStatus(e: MediaQueryListEvent | MediaQueryList) {
+    isMobile.value = e.matches
+}
+
+onMounted(() => {
+    mediaQuery = window.matchMedia('(max-width: 767px)')
+    updateMobileStatus(mediaQuery)
+    mediaQuery.addEventListener('change', updateMobileStatus)
+})
+
+onUnmounted(() => {
+    if (mediaQuery) {
+        mediaQuery.removeEventListener('change', updateMobileStatus)
+    }
+})
 
 const props = defineProps<{
     tasks: TaskRecord[]
@@ -88,6 +112,7 @@ const columns: DataTableColumn<TaskRecord>[] = [
     {
         title: '歌曲信息',
         key: 'song',
+        minWidth: 200,  // 确保最小列宽，防止被压缩
         render(row: TaskRecord) {
             return h('div', { class: 'song-info' }, [
                 h('span', { class: 'song-title' }, row.songTitle || '未知歌曲'),
@@ -170,7 +195,10 @@ const columns: DataTableColumn<TaskRecord>[] = [
     display: flex;
     flex-direction: row;
     align-items: baseline;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    /* 改为 nowrap，禁止换行 */
+    min-width: 0;
+    /* 允许自身收缩 */
 }
 
 .song-title {
@@ -178,12 +206,18 @@ const columns: DataTableColumn<TaskRecord>[] = [
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex-shrink: 1;
+    /* 允许收缩 */
+    min-width: 0;
+    /* 允许收缩 */
 }
 
 .song-separator {
     margin: 0 4px;
     color: var(--n-text-color-3);
     font-size: 12px;
+    flex-shrink: 0;
+    /* 分隔符不收缩 */
 }
 
 .song-artist {
@@ -192,5 +226,9 @@ const columns: DataTableColumn<TaskRecord>[] = [
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex-shrink: 1;
+    /* 允许收缩 */
+    min-width: 0;
+    /* 允许收缩 */
 }
 </style>
