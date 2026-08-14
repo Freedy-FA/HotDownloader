@@ -5,11 +5,13 @@ use std::sync::Arc;
 
 use log;
 use tauri::AppHandle;
+use tauri_plugin_android_fs::{AndroidFsExt, FsUri};
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
 use super::task::{download_task, TaskContext};
 
+#[derive(Clone)]
 pub struct TaskController {
     pub cancel_token: CancellationToken,
     pub pause_flag: Arc<AtomicBool>,
@@ -19,6 +21,10 @@ pub struct TaskController {
     pub delete_file_on_cancel: Arc<AtomicBool>,
     /// 下载线程确定的最终文件路径（供外部删除使用）
     pub final_path: Arc<Mutex<Option<String>>>,
+    /// 任务是否已由调度器启动
+    pub started: Arc<AtomicBool>,
+    /// 任务完成或退出的通知（用于 remove 等待）
+    pub done: Arc<Notify>,
 }
 
 #[derive(Clone)]
@@ -67,6 +73,8 @@ impl DownloadEngine {
             url_ready: Arc::new(Notify::new()),
             delete_file_on_cancel: Arc::new(AtomicBool::new(false)),
             final_path: Arc::new(Mutex::new(None)),
+            started: Arc::new(AtomicBool::new(false)),
+            done: Arc::new(Notify::new()),
         };
 
         let ctx = TaskContext {
@@ -121,6 +129,8 @@ impl DownloadEngine {
             url_ready: Arc::new(Notify::new()),
             delete_file_on_cancel: Arc::new(AtomicBool::new(false)),
             final_path: ctx.final_path.clone(), // 共享同一个 final_path
+            started: Arc::new(AtomicBool::new(false)),
+            done: Arc::new(Notify::new()),
         };
 
         // 重新插入控制器（覆盖可能存在的旧控制器）
@@ -198,26 +208,31 @@ impl DownloadEngine {
 
                 let ctrl = {
                     let controllers = self.active_controllers.lock().await;
-                    controllers.get(&ctx.task_id).map(|c| TaskController {
-                        cancel_token: c.cancel_token.clone(),
-                        pause_flag: c.pause_flag.clone(),
-                        resume_notify: c.resume_notify.clone(),
-                        url_ready: c.url_ready.clone(),
-                        delete_file_on_cancel: c.delete_file_on_cancel.clone(),
-                        final_path: c.final_path.clone(),
-                    })
+                    controllers.get(&ctx.task_id).map(|c| c.clone())
                 };
 
                 if let Some(ctrl) = ctrl {
+                    // 如果任务已被取消（例如 remove 提前取消），则跳过并通知 done
+                    if ctrl.cancel_token.is_cancelled() {
+                        ctrl.done.notify_one();
+                        continue;
+                    }
+
+                    // 标记任务已启动
+                    ctrl.started.store(true, Ordering::SeqCst);
+
                     self.active_downloads.fetch_add(1, Ordering::SeqCst);
                     let active_downloads = self.active_downloads.clone();
                     let scheduler_notify = self.scheduler_notify.clone();
                     let app_handle = self.app_handle.clone();
                     let task_id = ctx.task_id.clone();
                     let engine = self.clone();
+                    let ctrl_clone = ctrl.clone();
 
                     tokio::spawn(async move {
-                        download_task(ctx, ctrl, app_handle).await;
+                        download_task(ctx, ctrl_clone.clone(), app_handle).await;
+                        // 通知任务完成
+                        ctrl_clone.done.notify_one();
                         // 下载结束（完成/错误），仅移除控制器，保留任务上下文供删除文件使用
                         engine.active_controllers.lock().await.remove(&task_id);
                         active_downloads.fetch_sub(1, Ordering::SeqCst);
@@ -231,45 +246,81 @@ impl DownloadEngine {
         }
     }
 
-    /// 移除任务记录，并可选删除文件
-    pub async fn remove(&self, task_id: &str, delete_file: bool) {
-        // 先清理就绪队列
+    /// 移除任务记录，并可选删除文件。返回 Result 以便删除失败时通知用户。
+    pub async fn remove(&self, task_id: &str, delete_file: bool) -> Result<(), String> {
+        // 1. 清理就绪队列，防止任务再次启动
         self.ready_tasks
             .lock()
             .await
             .retain(|t| t.task_id != task_id);
 
-        // 尝试从活跃控制器获取 final_path（任务可能仍在运行）
-        let ctrl = self.active_controllers.lock().await.remove(task_id);
-        if let Some(ctrl) = ctrl {
-            if delete_file {
-                let path_guard = ctrl.final_path.lock().await;
-                if let Some(p) = path_guard.as_ref() {
-                    if let Err(e) = fs::remove_file(p) {
-                        log::error!("删除文件失败 {}: {}", p, e);
-                    } else {
-                        log::info!("已删除文件: {}", p);
-                    }
-                }
-            }
-        } else {
-            // 任务不在活跃列表（已结束），从 task_contexts 中获取 final_path
-            if delete_file {
+        // 2. 获取控制器（不移除，先取消并等待）
+        let controller = self.active_controllers.lock().await.get(task_id).cloned();
+
+        if let Some(ctrl) = controller {
+            // 发送取消信号，唤醒可能处于暂停等待的任务
+            ctrl.cancel_token.cancel();
+            ctrl.resume_notify.notify_one();
+            ctrl.url_ready.notify_one();
+            // 等待下载线程退出（无论是否已启动，均会通过 done 通知）
+            ctrl.done.notified().await;
+        }
+
+        // 3. 现在安全地移除控制器并获取 final_path
+        let final_path = {
+            let ctrl_removed = self.active_controllers.lock().await.remove(task_id);
+            if let Some(ctrl) = ctrl_removed {
+                let guard = ctrl.final_path.lock().await;
+                guard.clone()
+            } else {
+                // 可能已被调度器移除，从上下文获取
                 let ctx_map = self.task_contexts.lock().await;
                 if let Some(ctx) = ctx_map.get(task_id) {
-                    let path_guard = ctx.final_path.lock().await;
-                    if let Some(p) = path_guard.as_ref() {
-                        if let Err(e) = fs::remove_file(p) {
-                            log::error!("删除文件失败 {}: {}", p, e);
-                        } else {
-                            log::info!("已删除文件: {}", p);
+                    let guard = ctx.final_path.lock().await;
+                    guard.clone()
+                } else {
+                    None
+                }
+            }
+        };
+
+        // 4. 删除文件（如果要求）
+        if delete_file {
+            if let Some(path) = final_path {
+                // 判断是否为 SAF URI
+                if path.starts_with("content://") || path.starts_with("saf://") {
+                    // SAF 模式：使用插件 API 删除
+                    let fs_uri = FsUri::from_uri(path);
+                    let api = self.app_handle.android_fs();
+                    match api.remove_file(&fs_uri) {
+                        Ok(()) => {
+                            log::info!("已删除 SAF 文件: {}", fs_uri.uri);
+                        }
+                        Err(e) => {
+                            log::error!("删除 SAF 文件失败 {}: {}", fs_uri.uri, e);
+                            // 清除任务上下文，但返回错误
+                            self.task_contexts.lock().await.remove(task_id);
+                            return Err(format!("删除 SAF 文件失败: {}", e));
+                        }
+                    }
+                } else {
+                    // 普通模式：使用标准库删除
+                    match fs::remove_file(&path) {
+                        Ok(()) => {
+                            log::info!("已删除文件: {}", path);
+                        }
+                        Err(e) => {
+                            log::error!("删除文件失败 {}: {}", path, e);
+                            self.task_contexts.lock().await.remove(task_id);
+                            return Err(format!("删除文件失败: {}", e));
                         }
                     }
                 }
             }
         }
 
-        // 无论如何，清除任务上下文
+        // 5. 清除任务上下文
         self.task_contexts.lock().await.remove(task_id);
+        Ok(())
     }
 }

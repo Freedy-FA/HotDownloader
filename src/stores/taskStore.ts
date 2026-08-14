@@ -89,34 +89,13 @@ export const useTaskStore = defineStore('tasks', () => {
         saveTasks()
     }
 
-    // 移除任务，不再传递 filePath，后端自行获取
+    // 移除任务，统一由后端处理文件删除（包括 SAF 模式）
     async function removeTask(taskId: string, deleteFile: boolean = false) {
-        const task = tasks.value.find((t) => t.id === taskId)
-        if (deleteFile && task) {
-            const settingsStore = useSettingsStore()
-            const isSaf = settingsStore.settings.downloadDir === 'saf://'
-            if (isSaf && task.filePath) {
-                try {
-                    await invoke('delete_saf_file', { uri: task.filePath })
-                } catch (e: any) {
-                    console.error('删除 SAF 文件失败:', e)
-                    notify()?.error({ title: '删除文件失败', description: e?.message || String(e), duration: 3000 })
-                }
-            } else {
-                try {
-                    await invoke('remove_task', { taskId, deleteFile: true })
-                } catch (e: any) {
-                    console.error('移除任务失败:', e)
-                    notify()?.error({ title: '移除任务失败', description: e?.message || String(e), duration: 3000 })
-                }
-            }
-        } else {
-            try {
-                await invoke('remove_task', { taskId, deleteFile: false })
-            } catch (e: any) {
-                console.error('移除任务失败:', e)
-                notify()?.error({ title: '移除任务失败', description: e?.message || String(e), duration: 3000 })
-            }
+        try {
+            await invoke('remove_task', { taskId, deleteFile })
+        } catch (e: any) {
+            console.error('移除任务失败:', e)
+            notify()?.error({ title: '移除任务失败', description: e?.message || String(e), duration: 3000 })
         }
         tasks.value = tasks.value.filter((t) => t.id !== taskId)
         await saveTasks()

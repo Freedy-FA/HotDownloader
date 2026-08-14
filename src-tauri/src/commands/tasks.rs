@@ -68,8 +68,7 @@ pub async fn cancel_task(app: AppHandle, task_id: String, delete_file: bool) -> 
 #[command]
 pub async fn remove_task(app: AppHandle, task_id: String, delete_file: bool) -> Result<(), String> {
     let engine = app.state::<DownloadEngine>().clone();
-    engine.remove(&task_id, delete_file).await;
-    Ok(())
+    engine.remove(&task_id, delete_file).await
 }
 
 #[command]

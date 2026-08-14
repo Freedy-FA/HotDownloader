@@ -124,18 +124,17 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
         }
     };
 
-    // 将最终路径写入控制器，供外部删除使用
-    *controller.final_path.lock().await = Some(download_dir.clone());
-
     log::info!("任务 {} 开始下载，文件路径: {}", ctx.task_id, download_dir);
 
-    // 2. 创建目录并验证
-    let parent_dir = Path::new(&download_dir).parent().unwrap_or(Path::new("."));
-    if !parent_dir.exists() {
-        if let Err(e) = fs::create_dir_all(parent_dir) {
-            log::error!("创建下载目录失败: {}", e);
-            progress::emit_error(&app_handle, &ctx.task_id, "下载目录无法访问");
-            return;
+    // 2. 创建目录并验证（仅普通模式需要）
+    if !is_saf {
+        let parent_dir = Path::new(&download_dir).parent().unwrap_or(Path::new("."));
+        if !parent_dir.exists() {
+            if let Err(e) = fs::create_dir_all(parent_dir) {
+                log::error!("创建下载目录失败: {}", e);
+                progress::emit_error(&app_handle, &ctx.task_id, "下载目录无法访问");
+                return;
+            }
         }
     }
 
@@ -423,6 +422,14 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 
             if let Some(f) = f {
                 file = Some(f);
+                // 更新 final_path：SAF 模式为 URI，普通模式为普通路径
+                if is_saf {
+                    if let Some(uri) = saf_file_uri.clone() {
+                        *controller.final_path.lock().await = Some(uri);
+                    }
+                } else {
+                    *controller.final_path.lock().await = Some(download_dir.clone());
+                }
             } else {
                 break 'download;
             }
@@ -638,11 +645,26 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
     if controller.cancel_token.is_cancelled()
         && controller.delete_file_on_cancel.load(Ordering::SeqCst)
     {
-        log::info!("取消任务，正在删除文件: {}", download_dir);
-        if let Err(e) = fs::remove_file(&download_dir) {
-            log::error!("删除文件失败: {}", e);
+        if is_saf {
+            // SAF 模式：使用插件 API 删除
+            if let Some(uri) = saf_file_uri.clone() {
+                let fs_uri = FsUri::from_uri(uri);
+                let api = app_handle.android_fs();
+                if let Err(e) = api.remove_file(&fs_uri) {
+                    log::error!("删除 SAF 文件失败: {}", e);
+                } else {
+                    log::info!("SAF 文件已删除: {}", fs_uri.uri);
+                }
+            } else {
+                log::warn!("任务 {} 取消时未记录 SAF 文件 URI，无法删除", ctx.task_id);
+            }
         } else {
-            log::info!("文件已成功删除: {}", download_dir);
+            // 普通模式：使用标准库删除
+            if let Err(e) = fs::remove_file(&download_dir) {
+                log::error!("删除文件失败: {}", e);
+            } else {
+                log::info!("文件已成功删除: {}", download_dir);
+            }
         }
     }
 }
