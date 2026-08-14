@@ -1,9 +1,7 @@
 <template>
     <div class="playlist-view">
-        <div class="import-bar">
-            <n-input v-model:value="input" placeholder="请输入歌单链接或 ID" clearable />
-            <n-button type="primary" :loading="loading" @click="handleImport">导入歌单</n-button>
-        </div>
+        <SearchBar v-model:keyword="input" placeholder="请输入歌单链接或 ID" button-text="导入歌单" :loading="loading"
+            @search="handleImport" @clear="resetPage" />
 
         <div v-if="loading" class="loading-wrapper">
             <n-spin size="medium" />
@@ -48,12 +46,13 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { NInput, NButton, NSpin, NAlert, NEmpty, NCheckbox } from 'naive-ui'
+import { NSpin, NAlert, NEmpty, NCheckbox } from 'naive-ui'
 import type { PlaylistInfo, SongInfo, PlaylistSongsResponse } from '../types'
 import * as musicApi from '../api/musicApi'
 import { useDownloadActions } from '../composables/useDownloadActions'
 import SongItem from '../components/search/SongItem.vue'
 import BatchDownloadBar from '../components/search/BatchDownloadBar.vue'
+import SearchBar from '../components/search/SearchBar.vue'
 
 const input = ref('')
 const loading = ref(false)
@@ -84,9 +83,17 @@ function formatPlayCount(count: number): string {
     return count.toString()
 }
 
+function resetPage() {
+    loading.value = false
+    errorMsg.value = ''
+    playlist.value = null
+    songs.value = []
+    selectedIds.value = []
+}
+
 async function handleImport() {
     const term = input.value.trim()
-    if (!term) return
+    if (!term || loading.value) return
 
     loading.value = true
     errorMsg.value = ''
@@ -120,9 +127,9 @@ function onBatchDownload() {
     gap: 16px;
 }
 
-.import-bar {
-    display: flex;
-    gap: 12px;
+/* 覆盖 SearchBar 自带的 margin-bottom，避免与父容器 gap 叠加 */
+.playlist-view :deep(.search-bar) {
+    margin-bottom: 0;
 }
 
 .loading-wrapper,

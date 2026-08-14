@@ -1,9 +1,10 @@
 <template>
     <div class="search-bar">
-        <n-input v-model:value="keywordModel" placeholder="搜索歌曲、歌手、专辑" clearable @keyup.enter="handleSearch"
-            class="search-input" />
-        <n-button type="primary" @click="handleSearch" :disabled="!keywordModel.trim()" class="search-btn">
-            搜索
+        <n-input v-model:value="keywordModel" :placeholder="placeholder" clearable @keyup.enter="handleSearch"
+            @clear="handleClear" class="search-input" />
+        <n-button type="primary" @click="handleSearch" :disabled="!keywordModel.trim() || loading" :loading="loading"
+            class="search-btn">
+            {{ buttonText }}
         </n-button>
     </div>
 </template>
@@ -12,13 +13,24 @@
 import { ref, watch } from 'vue'
 import { NInput, NButton } from 'naive-ui'
 
-const props = defineProps<{
-    keyword: string
-}>()
+const props = withDefaults(
+    defineProps<{
+        keyword: string
+        placeholder?: string
+        buttonText?: string
+        loading?: boolean
+    }>(),
+    {
+        placeholder: '搜索歌曲、歌手、专辑',
+        buttonText: '搜索',
+        loading: false,
+    }
+)
 
 const emit = defineEmits<{
     (e: 'update:keyword', value: string): void
     (e: 'search'): void
+    (e: 'clear'): void
 }>()
 
 const keywordModel = ref(props.keyword)
@@ -42,6 +54,11 @@ function handleSearch() {
     if (keywordModel.value.trim()) {
         emit('search')
     }
+}
+
+function handleClear() {
+    // 点击清空按钮时，输入框已经变为空，同时通知父组件清理页面状态
+    emit('clear')
 }
 </script>
 
@@ -153,8 +170,6 @@ function handleSearch() {
     font-size: var(--search-font-size) !important;
     border-radius: var(--search-radius) !important;
     /* 与外层圆角一致 */
-    /* 不再覆盖背景色、文字色、边框，全由 Naive UI 原生控制 */
-    /* 保留 flex 居中，防止内部文字偏移 */
     display: inline-flex !important;
     align-items: center;
     justify-content: center;
@@ -165,7 +180,6 @@ function handleSearch() {
 .search-bar .search-btn:hover:not(:disabled) {
     transform: translateY(-1px);
     box-shadow: 0 4px 10px rgba(24, 144, 255, 0.3);
-    /* primary 蓝色的悬停阴影，可自定义或省略 */
 }
 
 .search-bar .search-btn:active:not(:disabled) {
