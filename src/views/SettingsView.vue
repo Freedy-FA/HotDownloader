@@ -1,18 +1,44 @@
 <template>
-    <div class="settings-view">
-        <n-form label-placement="left" label-width="180">
-            <QualitySetting />
-            <DowngradeSetting />
-            <DirectorySetting />
-            <NamingTemplate />
-            <ConcurrencySetting />
-            <JumpToTaskSetting />
-            <ClearHistoryButton />
-        </n-form>
+    <div class="settings-view" :class="{ 'is-narrow': isNarrow }">
+        <!-- 移动端：分组纵向布局 -->
+        <template v-if="isNarrow">
+            <div class="settings-section">
+                <h2 class="section-title">基本设置</h2>
+                <n-form label-placement="top">
+                    <QualitySetting />
+                    <DowngradeSetting />
+                    <ClearHistoryButton />
+                </n-form>
+            </div>
+
+            <div class="settings-section">
+                <h2 class="section-title">下载设置</h2>
+                <n-form label-placement="top">
+                    <DirectorySetting />
+                    <NamingTemplate />
+                    <ConcurrencySetting />
+                    <JumpToTaskSetting />
+                </n-form>
+            </div>
+        </template>
+
+        <!-- 桌面端：原有左右分栏表单 -->
+        <template v-else>
+            <n-form label-placement="left" label-width="180">
+                <QualitySetting />
+                <DowngradeSetting />
+                <DirectorySetting />
+                <NamingTemplate />
+                <ConcurrencySetting />
+                <JumpToTaskSetting />
+                <ClearHistoryButton />
+            </n-form>
+        </template>
     </div>
 </template>
 
 <script setup lang="ts">
+import { ref, onMounted, onUnmounted } from 'vue'
 import { NForm } from 'naive-ui'
 import QualitySetting from '../components/settings/QualitySetting.vue'
 import DowngradeSetting from '../components/settings/DowngradeSetting.vue'
@@ -21,11 +47,55 @@ import NamingTemplate from '../components/settings/NamingTemplate.vue'
 import ConcurrencySetting from '../components/settings/ConcurrencySetting.vue'
 import JumpToTaskSetting from '../components/settings/JumpToTaskSetting.vue'
 import ClearHistoryButton from '../components/settings/ClearHistoryButton.vue'
+
+const isNarrow = ref(
+    typeof window !== 'undefined' &&
+    window.matchMedia('(max-width: 767px)').matches
+)
+
+let mediaQuery: MediaQueryList | null = null
+
+function updateNarrow(e: MediaQueryListEvent | MediaQueryList) {
+    isNarrow.value = e.matches
+}
+
+onMounted(() => {
+    mediaQuery = window.matchMedia('(max-width: 767px)')
+    updateNarrow(mediaQuery)
+    mediaQuery.addEventListener('change', updateNarrow)
+})
+
+onUnmounted(() => {
+    if (mediaQuery) {
+        mediaQuery.removeEventListener('change', updateNarrow)
+    }
+})
 </script>
 
 <style scoped>
 .settings-view {
     max-width: 600px;
     padding: 16px 0;
+}
+
+/* 移动端移除最大宽度限制，撑满父容器 */
+.settings-view.is-narrow {
+    max-width: none;
+}
+
+.settings-section {
+    margin-bottom: 24px;
+}
+
+.settings-section+.settings-section {
+    border-top: 1px solid var(--border-color, #e0e0e0);
+    padding-top: 24px;
+}
+
+.section-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--color-text);
 }
 </style>
