@@ -2,7 +2,7 @@
     <div class="about-view">
         <div class="about-card">
             <h1 class="app-title">HotDownloader</h1>
-            <div class="app-version">版本 1.0.2</div>
+            <div class="app-version">版本 1.0.3</div>
             <p class="app-description">
                 基于 Tauri 2 + Vue 3 的桌面音乐下载应用，支持搜索、下载音乐歌曲。
             </p>
