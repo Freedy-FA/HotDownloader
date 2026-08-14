@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { SongInfo, SearchSuggestionData } from '../types'
+import type { SongInfo, SearchSuggestionData, PlaylistSongsResponse } from '../types'
 
 export async function searchSongs(
     keyword: string,
@@ -28,4 +28,10 @@ export async function getHotKeywords(): Promise<string[]> {
 export async function fetchSuggestions(keyword: string): Promise<SearchSuggestionData> {
     const json = await invoke<string>('fetch_suggestions', { keyword })
     return JSON.parse(json) as SearchSuggestionData
+}
+
+// 获取歌单
+export async function fetchPlaylistSongs(input: string): Promise<PlaylistSongsResponse> {
+    const json = await invoke<string>('fetch_playlist_songs', { input })
+    return JSON.parse(json) as PlaylistSongsResponse
 }

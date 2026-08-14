@@ -12,6 +12,12 @@ const routes: RouteRecordRaw[] = [
         meta: { keepAlive: true },
     },
     {
+        path: '/playlist',
+        name: 'playlist',
+        component: () => import('../views/PlaylistView.vue'),
+        meta: { keepAlive: true },
+    },
+    {
         path: '/task',
         name: 'task',
         component: () => import('../views/TaskView.vue'),

@@ -105,76 +105,93 @@ pub async fn search_songs(keyword: String, page: u32, limit: u32) -> Result<Stri
 
     let mut songs = Vec::new();
     for item in item_song {
-        let file = &item["file"];
-        // 必须有 media_mid 才能下载，否则跳过
-        let media_mid = file["media_mid"].as_str().unwrap_or("");
-        if media_mid.is_empty() {
-            continue;
+        if let Some(song_obj) = parse_song(item) {
+            songs.push(song_obj);
         }
-
-        // 歌曲唯一标识（使用 mid）
-        let mid = item["mid"].as_str().unwrap_or("").to_string();
-
-        // 歌名拼接附加信息
-        let name = item["name"].as_str().unwrap_or("");
-        let title_extra = item["title_extra"].as_str().unwrap_or("");
-        // 避免 if 表达式类型推断问题，改用可变变量赋值
-        let mut title = name.to_string();
-        if !title_extra.is_empty() {
-            title = format!("{}{}", name, title_extra);
-        }
-
-        // 歌手列表，用逗号连接
-        let singers: Vec<String> = item["singer"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|s| s["name"].as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let artist = singers.join(", ");
-
-        // 专辑名
-        let album_name = item["album"]["name"].as_str().unwrap_or("").to_string();
-
-        // 专辑 mid 与第一个歌手 mid，用于构建封面
-        let album_mid = item["album"]["mid"].as_str().unwrap_or("");
-        let first_singer_mid = item["singer"]
-            .as_array()
-            .and_then(|arr| arr.first())
-            .and_then(|s| s["mid"].as_str())
-            .unwrap_or("");
-
-        // 封面URL，同样用可变变量避免 if 表达式问题
-        let mut cover_url = String::new();
-        if !album_mid.is_empty() && album_mid != "空" {
-            cover_url = format!(
-                "https://y.gtimg.cn/music/photo_new/T002R500x500M000{}.jpg",
-                album_mid
-            );
-        } else if !first_singer_mid.is_empty() {
-            cover_url = format!(
-                "https://y.gtimg.cn/music/photo_new/T001R500x500M000{}.jpg",
-                first_singer_mid
-            );
-        }
-
-        // 构建品质列表（与前端 Quality 类型对应）
-        let qualities = build_qualities(file, &item["vs"]);
-
-        songs.push(json!({
-            "id": mid,
-            "title": title,
-            "artist": artist,
-            "album": album_name,
-            "coverUrl": cover_url,
-            "mediaMid": media_mid,
-            "qualities": qualities
-        }));
     }
 
     Ok(serde_json::to_string(&songs).map_err(|e| format!("序列化结果失败: {}", e))?)
+}
+
+/// 通用歌曲解析函数
+/// - song: 歌曲原始 JSON 对象（搜索或歌单接口中的一项）
+/// 标题优先使用 `name` 字段，若为空则使用 `title` 字段
+/// 封面优先使用专辑 mid，其次歌手 mid，否则为空字符串
+/// 返回 Option<Value>，当 mid 或 media_mid 为空时返回 None
+fn parse_song(song: &Value) -> Option<Value> {
+    // 歌曲唯一标识（使用 mid）
+    let mid = song["mid"].as_str().unwrap_or("").to_string();
+    if mid.is_empty() {
+        return None;
+    }
+
+    // 必须有 media_mid 才能下载，否则跳过
+    let media_mid = song["file"]["media_mid"].as_str().unwrap_or("").to_string();
+    if media_mid.is_empty() {
+        return None;
+    }
+
+    // 标题：优先 name，若为空则 title
+    let title = song["name"]
+        .as_str()
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            song["title"]
+                .as_str()
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_default();
+
+    // 歌手列表，用逗号连接
+    let singers: Vec<String> = song["singer"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s["name"].as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let artist = singers.join(", ");
+
+    // 专辑名
+    let album_name = song["album"]["name"].as_str().unwrap_or("").to_string();
+
+    // 封面：专辑 mid 优先，其次歌手 mid
+    let album_mid = song["album"]["mid"].as_str().unwrap_or("");
+    let first_singer_mid = song["singer"]
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|s| s["mid"].as_str())
+        .unwrap_or("");
+
+    // 封面URL，同样用可变变量避免 if 表达式问题
+    let mut cover_url = String::new();
+    if !album_mid.is_empty() && album_mid != "空" {
+        cover_url = format!(
+            "https://y.gtimg.cn/music/photo_new/T002R500x500M000{}.jpg",
+            album_mid
+        );
+    } else if !first_singer_mid.is_empty() {
+        cover_url = format!(
+            "https://y.gtimg.cn/music/photo_new/T001R500x500M000{}.jpg",
+            first_singer_mid
+        );
+    }
+
+    // 品质列表（复用 build_qualities）
+    let qualities = build_qualities(&song["file"], &song["vs"]);
+
+    Some(json!({
+        "id": mid,
+        "title": title,
+        "artist": artist,
+        "album": album_name,
+        "coverUrl": cover_url,
+        "mediaMid": media_mid,
+        "qualities": qualities
+    }))
 }
 
 /// 根据 file 和 vs 生成可用品质列表
@@ -603,4 +620,130 @@ pub async fn fetch_suggestions(keyword: String) -> Result<String, String> {
 
     Ok(serde_json::to_string(&Value::Object(result))
         .map_err(|e| format!("序列化结果失败: {}", e))?)
+}
+
+/// 从用户输入中提取歌单 ID
+fn extract_playlist_id(input: &str) -> Result<String, String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Err("请输入歌单链接或 ID".into());
+    }
+
+    if input.chars().all(|c| c.is_ascii_digit()) {
+        return Ok(input.to_string());
+    }
+
+    let url = Url::parse(input).map_err(|_| "无法识别的歌单链接或 ID".to_string())?;
+
+    if let Some((_, id)) = url.query_pairs().find(|(k, _)| k == "id") {
+        let id = id.trim().to_string();
+        if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) {
+            return Ok(id);
+        }
+    }
+
+    if let Some(segments) = url.path_segments() {
+        let segs: Vec<&str> = segments.collect();
+        if let Some(pos) = segs.iter().position(|s| *s == "playlist") {
+            if let Some(id_part) = segs.get(pos + 1) {
+                let id = id_part.trim_end_matches(".html");
+                if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) {
+                    return Ok(id.to_string());
+                }
+            }
+        }
+    }
+
+    Err("无法从链接中提取歌单 ID".into())
+}
+
+/// 获取歌单歌曲列表
+/// https://github.com/lyswhut/lx-music-desktop/blob/9c364b482e5621a1d38b50e8610d2fb974457e6e/src/renderer/utils/musicSdk/tx/songList.js#L196
+#[command]
+pub async fn fetch_playlist_songs(input: String) -> Result<String, String> {
+    let disstid = extract_playlist_id(&input)?;
+
+    let base_url = "https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg";
+    let url = Url::parse_with_params(
+        base_url,
+        &[
+            ("type", "1"),
+            ("json", "1"),
+            ("utf8", "1"),
+            ("onlysong", "0"),
+            ("new_format", "1"),
+            ("disstid", disstid.as_str()),
+            ("loginUin", "0"),
+            ("hostUin", "0"),
+            ("format", "json"),
+            ("inCharset", "utf8"),
+            ("outCharset", "utf-8"),
+            ("notice", "0"),
+            ("platform", "yqq.json"),
+            ("needNewCode", "0"),
+        ],
+    )
+    .map_err(|e| format!("URL 构建失败: {}", e))?;
+
+    let resp = CLIENT
+        .get(url)
+        .header(
+            "Referer",
+            format!("https://y.qq.com/n/yqq/playsquare/{}.html", disstid),
+        )
+        .header("Origin", "https://y.qq.com")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        )
+        .header("Accept", "*/*")
+        .send()
+        .await
+        .map_err(|e| format!("网络错误: {}", e))?;
+
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取响应失败: {}", e))?;
+    let data: Value = serde_json::from_str(&text).map_err(|e| format!("解析响应失败: {}", e))?;
+
+    let code = data["code"].as_i64().unwrap_or(-1);
+    let subcode = data["subcode"].as_i64().unwrap_or(-1);
+    if code != 0 || subcode != 0 {
+        return Err(format!(
+            "接口错误: code={}, subcode={}, msg={}",
+            code,
+            subcode,
+            data["msg"].as_str().unwrap_or("")
+        ));
+    }
+
+    let cd = data["cdlist"]
+        .as_array()
+        .and_then(|arr| arr.first())
+        .ok_or("未找到歌单数据")?;
+
+    let playlist = json!({
+        "id": disstid,
+        "name": cd["dissname"].as_str().unwrap_or(""),
+        "creator": cd["nickname"].as_str().unwrap_or(""),
+        "coverUrl": cd["logo"].as_str().unwrap_or(""),
+        "songCount": cd["songnum"].as_u64().unwrap_or(0),
+        "playCount": cd["visitnum"].as_u64().unwrap_or(0),
+    });
+
+    let songlist = cd["songlist"].as_array().ok_or("未找到歌曲列表")?;
+    let mut songs = Vec::new();
+
+    for song in songlist {
+        if let Some(song_obj) = parse_song(song) {
+            songs.push(song_obj);
+        }
+    }
+
+    Ok(json!({
+        "playlist": playlist,
+        "songs": songs
+    })
+    .to_string())
 }

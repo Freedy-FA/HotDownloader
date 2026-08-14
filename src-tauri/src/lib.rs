@@ -63,6 +63,7 @@ pub fn run() {
             commands::api::fetch_download_link,
             commands::api::fetch_hot_keywords,
             commands::api::fetch_suggestions,
+            commands::api::fetch_playlist_songs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

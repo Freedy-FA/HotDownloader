@@ -52,6 +52,22 @@ export interface SongInfo {
     qualities: QualityItem[]
 }
 
+// 歌单基本信息
+export interface PlaylistInfo {
+    id: string
+    name: string
+    creator: string
+    coverUrl: string
+    songCount: number
+    playCount: number
+}
+
+// 歌单接口完整返回
+export interface PlaylistSongsResponse {
+    playlist: PlaylistInfo
+    songs: SongInfo[]
+}
+
 // 搜索建议条目（对应后端 fetch_suggestions 返回的每个 item）
 export interface SearchSuggestionItem {
     id?: string

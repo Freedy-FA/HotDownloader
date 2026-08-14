@@ -68,6 +68,10 @@ const menuOptions: MenuOption[] = [
         key: '/search'
     },
     {
+        label: '歌单',
+        key: '/playlist'
+    },
+    {
         label: '任务',
         key: '/task'
     },
