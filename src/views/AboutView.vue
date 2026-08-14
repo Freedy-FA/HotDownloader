@@ -2,7 +2,8 @@
     <div class="about-view">
         <div class="about-card">
             <h1 class="app-title">HotDownloader</h1>
-            <div class="app-version">版本 1.0.3</div>
+            <!-- 直接使用注入的变量，不再硬编码 -->
+            <div class="app-version">版本 {{ version }}</div>
             <p class="app-description">
                 基于 Tauri 2 + Vue 3 的桌面音乐下载应用，支持搜索、下载音乐歌曲。
             </p>
@@ -50,6 +51,7 @@
 
 <script setup lang="ts">
 import { NUl, NLi, NA } from 'naive-ui'
+const version = import.meta.env.VITE_APP_VERSION
 
 interface ComponentInfo {
     name: string

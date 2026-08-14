@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import path from 'path';
+import path from 'path'
+import tauriConf from './src-tauri/tauri.conf.json' with { type: 'json' }
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -34,5 +35,9 @@ export default defineConfig({
     minify: !process.env.TAURI_ENV_DEBUG ? 'oxc' : false,
     // 在 debug 构建中生成 sourcemap
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
+  },
+  define: {
+    // 把版本号注入环境变量
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(tauriConf.version)
   },
 })
