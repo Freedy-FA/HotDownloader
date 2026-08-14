@@ -103,6 +103,13 @@ pub async fn search_songs(keyword: String, page: u32, limit: u32) -> Result<Stri
         .as_array()
         .ok_or("未找到歌曲列表")?;
 
+    // 分页判断修改
+    // 避免因 parse_song 过滤导致有效歌曲数不足一页时，误判为无更多结果，影响“加载更多”按钮显示。
+    // 直接读取接口返回的 meta.nextpage 字段。该字段为 -1 表示无下一页，否则为下一页页码。
+    let meta = &req["data"]["meta"];
+    let nextpage = meta["nextpage"].as_i64().unwrap_or(-1);
+    let has_more = nextpage != -1;
+
     let mut songs = Vec::new();
     for item in item_song {
         if let Some(song_obj) = parse_song(item) {
@@ -110,7 +117,13 @@ pub async fn search_songs(keyword: String, page: u32, limit: u32) -> Result<Stri
         }
     }
 
-    Ok(serde_json::to_string(&songs).map_err(|e| format!("序列化结果失败: {}", e))?)
+    // 返回包含歌曲列表和分页标志的 JSON 对象
+    let result = json!({
+        "songs": songs,
+        "has_more": has_more
+    });
+
+    Ok(serde_json::to_string(&result).map_err(|e| format!("序列化结果失败: {}", e))?)
 }
 
 /// 通用歌曲解析函数

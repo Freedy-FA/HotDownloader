@@ -17,9 +17,10 @@
             <n-spin size="medium" />
         </div>
 
-        <!-- 搜索结果列表（已搜索完毕） -->
+        <!-- 搜索结果列表（已搜索完毕），支持分页加载更多 -->
         <SearchResultList v-if="hasSearched && !loading" :songs="searchResults" v-model:selectedIds="selectedIds"
-            @download="onSingleDownload" @retry="handleSearch" />
+            :has-more="hasMore" :loading-more="loadingMore" @download="onSingleDownload" @retry="handleSearch"
+            @load-more="loadMore" />
 
         <BatchDownloadBar v-if="selectedIds.length > 0" :selectedCount="selectedIds.length"
             @batch-download="onBatchDownload" />
@@ -45,6 +46,16 @@ const searchResults = ref<SongInfo[]>([])
 const selectedIds = ref<string[]>([])
 const loading = ref(false)
 const hasSearched = ref(false)
+
+// ==================== 分页加载更多状态 ====================
+// 每页数量与后端 search_songs 的 limit 参数保持一致
+const PAGE_SIZE = 20
+// 当前已加载到第几页，新搜索时重置为 1
+const currentPage = ref(1)
+// 是否还有更多搜索结果，由后端返回的 has_more 字段决定
+const hasMore = ref(false)
+// 是否正在请求加载下一页，防止重复点击
+const loadingMore = ref(false)
 
 // 热搜
 const hotKeywords = ref<string[]>([])
@@ -88,14 +99,11 @@ watch(keyword, (newVal) => {
         const controller = new AbortController()
         abortController = controller
         try {
-            // musicApi.fetchSuggestions 需要改造以支持 AbortController，这里暂时直接调用
-            // 如果后端不支持 abort，至少避免旧请求覆盖新结果
             const res = await musicApi.fetchSuggestions(term)
             if (!controller.signal.aborted) {
                 suggestions.value = res
             }
         } catch {
-            // 忽略错误，建议列表清空
             if (!controller.signal.aborted) {
                 suggestions.value = { song: [], singer: [], album: [], mv: [] }
             }
@@ -121,6 +129,9 @@ watch(keyword, (newVal) => {
         searchResults.value = []
         selectedIds.value = []
         suggestions.value = { song: [], singer: [], album: [], mv: [] }
+        currentPage.value = 1
+        hasMore.value = false
+        loadingMore.value = false
     }
 })
 
@@ -163,15 +174,49 @@ async function handleSearch() {
     loading.value = true
     hasSearched.value = true
     selectedIds.value = []
+    currentPage.value = 1
+    hasMore.value = false
+    loadingMore.value = false
 
     try {
-        searchResults.value = await musicApi.searchSongs(term, 1)
+        // 修改点：使用新的 SearchResponse 返回结构
+        const response = await musicApi.searchSongs(term, currentPage.value, PAGE_SIZE)
+        searchResults.value = response.songs
+        hasMore.value = response.has_more
         historyStore.addHistory(term)
     } catch (error) {
         console.error('搜索失败:', error)
         searchResults.value = []
+        hasMore.value = false
     } finally {
         loading.value = false
+    }
+}
+
+// 加载更多搜索结果
+// 修改点：使用新的 SearchResponse 返回结构，并基于后端返回的 has_more 更新按钮状态
+async function loadMore() {
+    if (loading.value || loadingMore.value || !hasMore.value) return
+
+    const nextPage = currentPage.value + 1
+    loadingMore.value = true
+
+    try {
+        const response = await musicApi.searchSongs(keyword.value.trim(), nextPage, PAGE_SIZE)
+        const more = response.songs
+
+        // 按歌曲 id 去重，避免接口偶发重复数据导致列表混乱
+        const existingIds = new Set(searchResults.value.map((s) => s.id))
+        const newSongs = more.filter((s) => !existingIds.has(s.id))
+        searchResults.value = [...searchResults.value, ...newSongs]
+
+        currentPage.value = nextPage
+        hasMore.value = response.has_more
+    } catch (error) {
+        console.error('加载更多失败:', error)
+        // 保留 hasMore 状态，允许用户再次点击加载更多进行重试
+    } finally {
+        loadingMore.value = false
     }
 }
 

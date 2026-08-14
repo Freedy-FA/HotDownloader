@@ -1,13 +1,17 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { SongInfo, SearchSuggestionData, PlaylistSongsResponse } from '../types'
+import type { SongInfo, SearchResponse, SearchSuggestionData, PlaylistSongsResponse } from '../types'
 
 export async function searchSongs(
     keyword: string,
     page: number = 1,
     limit: number = 20
-): Promise<SongInfo[]> {
+): Promise<SearchResponse> {
     const json = await invoke<string>('search_songs', { keyword, page, limit })
-    return JSON.parse(json) as SongInfo[]
+    const parsed = JSON.parse(json) as SearchResponse
+    if (Array.isArray(parsed)) {
+        return { songs: parsed as unknown as SongInfo[], has_more: false }
+    }
+    return parsed
 }
 
 export async function fetchDownloadLink(

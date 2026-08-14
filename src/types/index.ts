@@ -52,6 +52,12 @@ export interface SongInfo {
     qualities: QualityItem[]
 }
 
+// 搜索结果完整返回
+export interface SearchResponse {
+    songs: SongInfo[]
+    has_more: boolean
+}
+
 // 歌单基本信息
 export interface PlaylistInfo {
     id: string
