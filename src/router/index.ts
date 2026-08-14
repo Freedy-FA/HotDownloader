@@ -29,6 +29,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/SettingsView.vue'),
         meta: { keepAlive: true },
     },
+    {
+        path: '/about',
+        name: 'about',
+        component: () => import('../views/AboutView.vue'),
+        meta: { keepAlive: false },
+    },
 ]
 
 const router = createRouter({

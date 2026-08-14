@@ -34,12 +34,18 @@
                 <ClearHistoryButton />
             </n-form>
         </template>
+
+        <!-- 关于入口（始终位于页面底部） -->
+        <div class="about-entry">
+            <n-button text @click="goAbout">关于 HotDownloader</n-button>
+        </div>
     </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
-import { NForm } from 'naive-ui'
+import { useRouter } from 'vue-router'
+import { NForm, NButton } from 'naive-ui'
 import QualitySetting from '../components/settings/QualitySetting.vue'
 import DowngradeSetting from '../components/settings/DowngradeSetting.vue'
 import DirectorySetting from '../components/settings/DirectorySetting.vue'
@@ -47,6 +53,8 @@ import NamingTemplate from '../components/settings/NamingTemplate.vue'
 import ConcurrencySetting from '../components/settings/ConcurrencySetting.vue'
 import JumpToTaskSetting from '../components/settings/JumpToTaskSetting.vue'
 import ClearHistoryButton from '../components/settings/ClearHistoryButton.vue'
+
+const router = useRouter()
 
 const isNarrow = ref(
     typeof window !== 'undefined' &&
@@ -70,12 +78,20 @@ onUnmounted(() => {
         mediaQuery.removeEventListener('change', updateNarrow)
     }
 })
+
+function goAbout() {
+    router.push('/about')
+}
 </script>
 
 <style scoped>
 .settings-view {
     max-width: 600px;
     padding: 16px 0;
+    /* 让设置页占满父容器高度，使用 flex 列布局 */
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
 }
 
 /* 移动端移除最大宽度限制，撑满父容器 */
@@ -97,5 +113,12 @@ onUnmounted(() => {
     font-weight: 600;
     margin-bottom: 12px;
     color: var(--color-text);
+}
+
+.about-entry {
+    /* 将关于入口推到底部 */
+    margin-top: auto;
+    padding-top: 24px;
+    text-align: center;
 }
 </style>
