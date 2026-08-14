@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
+use once_cell::sync::Lazy;
 use reqwest::header::{CONTENT_LENGTH, RANGE};
 use reqwest::StatusCode;
 use tauri::AppHandle;
@@ -15,11 +16,21 @@ use tokio::sync::Mutex;
 
 use super::engine::TaskController;
 use super::progress;
-use crate::commands::api::{self, CLIENT}; // 引用全局客户端
+use crate::commands::api::{self}; // 获取下载链接
 use crate::utils::{crypto, filename};
 
 /// 文件写入缓冲区容量（64 KB）
 const FILE_BUFFER_CAPACITY: usize = 64 * 1024;
+
+/// 下载专用 HTTP 客户端：不设总超时，避免大文件下载中断；设置读取超时 5 分钟
+static DOWNLOAD_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .user_agent("HotDownloader/1.0")
+        .connect_timeout(Duration::from_secs(10))
+        .read_timeout(Duration::from_secs(300)) // 5 分钟读取超时
+        .build()
+        .expect("Failed to create download HTTP client")
+});
 
 /// 歌曲信息，用于生成文件名
 #[derive(Clone)]
@@ -442,7 +453,9 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
         // 发起下载请求（带网络重试）
         let mut attempt = 0;
         let response = loop {
-            let mut request = CLIENT.get(&url).header("Referer", "https://y.qq.com");
+            let mut request = DOWNLOAD_CLIENT
+                .get(&url)
+                .header("Referer", "https://y.qq.com");
 
             if downloaded > 0 {
                 request = request.header(RANGE, format!("bytes={}-", downloaded));
