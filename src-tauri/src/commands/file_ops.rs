@@ -11,11 +11,9 @@ use open;
 use tauri_plugin_android_fs::{AndroidFsExt, FsUri};
 
 /// 获取系统默认下载目录路径（内部实现）
-pub(crate) fn get_default_download_dir_impl(app: &AppHandle) -> String {
+pub(crate) fn get_default_download_dir_impl(_app: &AppHandle) -> String {
     #[cfg(target_os = "android")]
     {
-        // 忽略 app 参数，避免未使用警告
-        let _ = app;
         // 尝试获取外部存储根目录
         if let Ok(ext) = std::env::var("EXTERNAL_STORAGE") {
             let path = Path::new(&ext).join("Download");
@@ -49,6 +47,9 @@ pub fn create_directory(path: String) -> Result<(), String> {
 /// 打开文件所在目录并选中文件（Android 上打开文件本身）
 #[command]
 pub fn open_file_location(app: AppHandle, path: String) -> Result<(), String> {
+    #[cfg(not(target_os = "android"))]
+    let _ = &app; // 消除非 Android 平台未使用警告
+
     let file_path = Path::new(&path);
     if !file_path.exists() {
         return Err("文件不存在".to_string());
@@ -141,6 +142,7 @@ pub fn pick_saf_folder(app: AppHandle) -> Result<String, String> {
     }
     #[cfg(not(target_os = "android"))]
     {
+        let _ = &app; // 消除非 Android 平台未使用警告
         Err("当前平台不支持 SAF".to_string())
     }
 }
@@ -156,6 +158,7 @@ pub fn delete_saf_file(app: AppHandle, uri: String) -> Result<(), String> {
     }
     #[cfg(not(target_os = "android"))]
     {
+        let _ = (&app, &uri); // 消除非 Android 平台未使用警告
         Err("当前平台不支持 SAF".to_string())
     }
 }
