@@ -3,7 +3,8 @@
         <!-- 单曲 -->
         <div v-if="data.song.length > 0" class="suggest-group">
             <div class="group-title">单曲</div>
-            <div v-for="item in data.song" :key="item.mid" class="suggest-item" @click="$emit('select', item.name)">
+            <div v-for="(item, index) in data.song" :key="item.mid ?? item.id ?? `song-${index}`" class="suggest-item"
+                @click="handleSelect(item)">
                 <span class="item-name">{{ item.name }}</span>
                 <span class="item-singer">- {{ item.singer }}</span>
             </div>
@@ -12,7 +13,8 @@
         <!-- 歌手 -->
         <div v-if="data.singer.length > 0" class="suggest-group">
             <div class="group-title">歌手</div>
-            <div v-for="item in data.singer" :key="item.mid" class="suggest-item" @click="$emit('select', item.name)">
+            <div v-for="(item, index) in data.singer" :key="item.mid ?? item.id ?? `singer-${index}`"
+                class="suggest-item" @click="handleSelect(item)">
                 <span class="item-name">{{ item.name }}</span>
             </div>
         </div>
@@ -20,7 +22,8 @@
         <!-- 专辑 -->
         <div v-if="data.album.length > 0" class="suggest-group">
             <div class="group-title">专辑</div>
-            <div v-for="item in data.album" :key="item.mid" class="suggest-item" @click="$emit('select', item.name)">
+            <div v-for="(item, index) in data.album" :key="item.mid ?? item.id ?? `album-${index}`" class="suggest-item"
+                @click="handleSelect(item)">
                 <span class="item-name">{{ item.name }}</span>
                 <span class="item-singer">- {{ item.singer }}</span>
             </div>
@@ -29,7 +32,8 @@
         <!-- MV -->
         <div v-if="data.mv.length > 0" class="suggest-group">
             <div class="group-title">MV</div>
-            <div v-for="item in data.mv" :key="item.vid" class="suggest-item" @click="$emit('select', item.name)">
+            <div v-for="(item, index) in data.mv" :key="item.vid ?? item.mid ?? item.id ?? `mv-${index}`"
+                class="suggest-item" @click="handleSelect(item)">
                 <span class="item-name">{{ item.name }}</span>
                 <span class="item-singer">- {{ item.singer }}</span>
             </div>
@@ -39,14 +43,22 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { SearchSuggestionData, SearchSuggestionItem } from '../../types'
 
 const props = defineProps<{
-    data: { song: any[]; singer: any[]; album: any[]; mv: any[] }
+    data: SearchSuggestionData
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
     (e: 'select', keyword: string): void
 }>()
+
+function handleSelect(item: SearchSuggestionItem) {
+    // 只有 name 存在时才触发选择
+    if (item.name) {
+        emit('select', item.name)
+    }
+}
 
 const hasAny = computed(
     () =>

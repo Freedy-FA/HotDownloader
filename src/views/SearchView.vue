@@ -38,7 +38,7 @@ import BatchDownloadBar from '../components/search/BatchDownloadBar.vue'
 import { useHistoryStore } from '../stores/historyStore'
 import { useDownloadActions } from '../composables/useDownloadActions'
 import * as musicApi from '../api/musicApi'
-import type { SongInfo } from '../types'
+import type { SongInfo, SearchSuggestionData } from '../types'
 
 const keyword = ref('')
 const searchResults = ref<SongInfo[]>([])
@@ -54,7 +54,7 @@ const historyStore = useHistoryStore()
 const { downloadSingle, batchDownload } = useDownloadActions()
 
 // ==================== 搜索建议相关 ====================
-const suggestions = ref<{ song: any[]; singer: any[]; album: any[]; mv: any[] }>({
+const suggestions = ref<SearchSuggestionData>({
     song: [],
     singer: [],
     album: [],

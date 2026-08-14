@@ -41,6 +41,7 @@ export interface QualityItem {
     size: number      // 文件字节大小
 }
 
+// 歌曲基本信息
 export interface SongInfo {
     id: string
     title: string
@@ -49,6 +50,25 @@ export interface SongInfo {
     coverUrl: string
     mediaMid: string
     qualities: QualityItem[]
+}
+
+// 搜索建议条目（对应后端 fetch_suggestions 返回的每个 item）
+export interface SearchSuggestionItem {
+    id?: string
+    mid?: string
+    name?: string
+    singer?: string
+    cover?: string | null
+    vid?: string          // 仅 MV 类型存在
+    [key: string]: unknown
+}
+
+// 搜索建议分组数据
+export interface SearchSuggestionData {
+    song: SearchSuggestionItem[]
+    singer: SearchSuggestionItem[]
+    album: SearchSuggestionItem[]
+    mv: SearchSuggestionItem[]
 }
 
 export interface TaskRecord {
