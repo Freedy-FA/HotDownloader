@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -17,6 +17,9 @@ use super::engine::TaskController;
 use super::progress;
 use crate::commands::api::{self, CLIENT}; // 引用全局客户端
 use crate::utils::{crypto, filename};
+
+/// 文件写入缓冲区容量（64 KB）
+const FILE_BUFFER_CAPACITY: usize = 64 * 1024;
 
 /// 歌曲信息，用于生成文件名
 #[derive(Clone)]
@@ -145,9 +148,8 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
     let mut url = String::new();
     let mut key = String::new();
 
-    // 5. 文件句柄（在循环外保持，续传时在循环内打开）
-    //    声明为 Option 以便在暂停恢复时重新打开文件。
-    let mut file: Option<fs::File> = None;
+    // 5. 文件句柄（使用 BufWriter 提升写入性能）
+    let mut file: Option<BufWriter<fs::File>> = None;
 
     let mut saf_file_uri: Option<String> = None;
 
@@ -421,7 +423,9 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             };
 
             if let Some(f) = f {
-                file = Some(f);
+                // 包装为 BufWriter，减少磁盘 IO 次数
+                file = Some(BufWriter::with_capacity(FILE_BUFFER_CAPACITY, f));
+
                 // 更新 final_path：SAF 模式为 URI，普通模式为普通路径
                 if is_saf {
                     if let Some(uri) = saf_file_uri.clone() {
@@ -486,6 +490,14 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 
         let status = response.status();
         if status == StatusCode::RANGE_NOT_SATISFIABLE {
+            // 刷新缓冲区
+            if let Some(ref mut f) = file {
+                if let Err(e) = f.flush() {
+                    log::error!("刷新文件缓冲区失败: {}", e);
+                    progress::emit_error(&app_handle, &ctx.task_id, "写入文件失败");
+                    break 'download;
+                }
+            }
             let final_display_path = if is_saf {
                 saf_file_uri.clone().unwrap_or_else(|| download_dir.clone())
             } else {
@@ -595,6 +607,14 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             }
 
             if total > 0 && downloaded >= total {
+                // 刷新缓冲区
+                if let Some(ref mut f) = file {
+                    if let Err(e) = f.flush() {
+                        log::error!("刷新文件缓冲区失败: {}", e);
+                        progress::emit_error(&app_handle, &ctx.task_id, "写入文件失败");
+                        break 'download;
+                    }
+                }
                 log::info!("下载完成: {}", download_dir);
                 // 完成时发送事件，SAF 模式下 final_path 改为完整 URI
                 let final_display_path = if is_saf {
@@ -621,7 +641,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             // 恢复后需要重新获取链接，清空 url 与 key，并释放当前文件句柄
             url.clear();
             key.clear();
-            file = None;
+            file = None; // 释放 BufWriter 并自动 flush
             continue 'download;
         }
 
@@ -630,7 +650,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             // 重新获取链接，避免旧链接过期
             url.clear();
             key.clear();
-            file = None; // 关闭文件，下次循环重新打开
+            file = None; // 释放 BufWriter 并自动 flush
             continue 'download;
         }
 
