@@ -526,7 +526,7 @@ pub async fn fetch_hot_keywords() -> Result<String, String> {
 #[command]
 pub async fn fetch_suggestions(keyword: String) -> Result<String, String> {
     // 构建 URL，并进行 URL 编码
-    let base_url = "http://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg";
+    let base_url = "https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg";
     let url = Url::parse_with_params(
         base_url,
         &[
