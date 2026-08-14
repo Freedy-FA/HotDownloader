@@ -230,18 +230,56 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                         saf_file_uri = Some(file_uri.uri.clone());
 
                         if downloaded > 0 {
-                            // 续传模式：打开文件并 seek 到偏移量
+                            // 续传模式：打开文件并校验大小后 seek 到偏移量
                             match api.open_file(&file_uri, FileAccessMode::ReadWrite) {
                                 Ok(mut f) => {
                                     use std::io::Seek;
-                                    if let Err(e) = f.seek(std::io::SeekFrom::Start(downloaded)) {
-                                        log::error!("SAF 文件 seek 失败: {}", e);
-                                        progress::emit_error(
-                                            &app_handle,
-                                            &ctx.task_id,
-                                            "文件定位失败",
+
+                                    // 校验文件大小：如果文件长度小于期望的偏移，说明文件异常，重置下载
+                                    let should_reset = match f.metadata() {
+                                        Ok(meta) => meta.len() < downloaded,
+                                        Err(_) => true, // 无法获取元数据，保守重置
+                                    };
+
+                                    if should_reset {
+                                        log::warn!(
+                                            "任务 {} SAF 文件大小异常，重置下载（期望偏移 {}，实际大小 {}）",
+                                            ctx.task_id,
+                                            downloaded,
+                                            f.metadata().map(|m| m.len()).unwrap_or(0)
                                         );
-                                        break 'download;
+                                        // 清空文件并从头下载
+                                        if let Err(e) = f.set_len(0) {
+                                            log::error!("SAF 文件截断失败: {}", e);
+                                            progress::emit_error(
+                                                &app_handle,
+                                                &ctx.task_id,
+                                                "文件异常，请重试",
+                                            );
+                                            break 'download;
+                                        }
+                                        if let Err(e) = f.seek(std::io::SeekFrom::Start(0)) {
+                                            log::error!("SAF 文件 seek 失败: {}", e);
+                                            progress::emit_error(
+                                                &app_handle,
+                                                &ctx.task_id,
+                                                "文件定位失败",
+                                            );
+                                            break 'download;
+                                        }
+                                        downloaded = 0;
+                                    } else {
+                                        // 文件大小正常，seek 到续传位置
+                                        if let Err(e) = f.seek(std::io::SeekFrom::Start(downloaded))
+                                        {
+                                            log::error!("SAF 文件 seek 失败: {}", e);
+                                            progress::emit_error(
+                                                &app_handle,
+                                                &ctx.task_id,
+                                                "文件定位失败",
+                                            );
+                                            break 'download;
+                                        }
                                     }
                                     Some(f)
                                 }
