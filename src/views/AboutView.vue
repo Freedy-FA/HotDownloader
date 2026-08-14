@@ -92,7 +92,8 @@ const frontendComponents: ComponentInfo[] = [
 }
 
 .about-card {
-    background-color: var(--bg-card, #fff);
+    /* 使用全局定义的侧边栏背景色，自动适配深色模式 */
+    background-color: var(--bg-sidebar);
     border-radius: 8px;
     padding: 24px;
     text-align: center;
@@ -118,7 +119,7 @@ const frontendComponents: ComponentInfo[] = [
 }
 
 .about-section {
-    background-color: var(--bg-card, #fff);
+    background-color: var(--bg-sidebar);
     border-radius: 8px;
     padding: 16px 20px;
 }
@@ -149,7 +150,7 @@ const frontendComponents: ComponentInfo[] = [
     justify-content: space-between;
     align-items: center;
     padding: 8px 0;
-    border-bottom: 1px solid var(--border-color, #e0e0e0);
+    border-bottom: 1px solid var(--border-color);
 }
 
 .component-item:last-child {

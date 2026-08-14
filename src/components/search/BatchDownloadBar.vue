@@ -23,8 +23,8 @@ defineEmits<{
 .batch-bar {
     position: sticky;
     bottom: 0;
-    background: var(--n-color, #fff);
-    border-top: 1px solid var(--n-border-color, #e0e0e0);
+    background-color: var(--bg-bottom);
+    border-top: 1px solid var(--border-color);
     padding: 12px 16px;
     display: flex;
     align-items: center;
@@ -34,5 +34,6 @@ defineEmits<{
 
 .selected-text {
     font-weight: 500;
+    color: var(--color-text);
 }
 </style>

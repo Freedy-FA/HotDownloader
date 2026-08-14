@@ -138,7 +138,7 @@ function onBatchDownload() {
     gap: 16px;
     align-items: center;
     padding: 12px;
-    background-color: var(--bg-card, #fff);
+    background-color: var(--bg-sidebar);
     border-radius: 8px;
 }
 
