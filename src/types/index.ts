@@ -144,3 +144,14 @@ export const DEFAULT_SETTINGS: Settings = {
     maxConcurrent: 3,
     jumpToTask: true,
 }
+
+// GitHub 最新 release 信息
+export interface UpdateInfo {
+    tag_name: string
+    name: string
+    body: string
+    html_url: string
+    published_at: string
+    prerelease: boolean
+    current_version: string
+}
