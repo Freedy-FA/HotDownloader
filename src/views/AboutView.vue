@@ -4,8 +4,9 @@
             <h1 class="app-title">HotDownloader</h1>
             <!-- 直接使用注入的变量，不再硬编码 -->
             <div class="app-version">版本 {{ version }}</div>
+            <!-- 更新为与 README 一致的跨平台描述 -->
             <p class="app-description">
-                基于 Tauri 2 + Vue 3 的桌面音乐下载应用，支持搜索、下载音乐歌曲。
+                基于 Tauri 2 + Vue 3 的跨平台音乐下载应用，支持桌面端（Windows/macOS/Linux）与 Android 端，提供搜索、歌单导入、多任务下载、自动降级、音频解密等功能。
             </p>
         </div>
 
@@ -58,20 +59,30 @@ interface ComponentInfo {
     license: string
 }
 
+// 后端组件列表已与 NOTICE 文件同步；包含 Tauri 官方插件、HTTP 客户端、文件系统及音频解密模块
 const rustComponents: ComponentInfo[] = [
     { name: 'dirs', license: 'MIT / Apache-2.0' },
     { name: 'futures-util', license: 'MIT / Apache-2.0' },
     { name: 'log', license: 'MIT / Apache-2.0' },
+    { name: 'open', license: 'MIT' },
+    { name: 'once_cell', license: 'MIT / Apache-2.0' },
     { name: 'reqwest', license: 'MIT / Apache-2.0' },
     { name: 'serde', license: 'MIT / Apache-2.0' },
     { name: 'serde_json', license: 'MIT / Apache-2.0' },
     { name: 'tauri', license: 'MIT / Apache-2.0' },
+    { name: 'tauri-build', license: 'MIT / Apache-2.0' },
+    { name: 'tauri-plugin-android-fs', license: 'MIT / Apache-2.0' },
+    { name: 'tauri-plugin-dialog', license: 'MIT / Apache-2.0' },
+    { name: 'tauri-plugin-log', license: 'MIT / Apache-2.0' },
+    { name: 'tauri-plugin-opener', license: 'MIT / Apache-2.0' },
+    { name: 'tauri-plugin-store', license: 'MIT / Apache-2.0' },
     { name: 'tokio', license: 'MIT' },
     { name: 'tokio-util', license: 'MIT' },
     { name: 'url', license: 'MIT / Apache-2.0' },
     { name: 'umc_qmc', license: 'Apache-2.0 OR MIT' },
 ]
 
+// 前端组件列表：仅列出运行时直接依赖，与 package.json dependencies 对应
 const frontendComponents: ComponentInfo[] = [
     { name: '@tauri-apps/api', license: 'Apache-2.0 OR MIT' },
     { name: '@tauri-apps/plugin-dialog', license: 'MIT OR Apache-2.0' },

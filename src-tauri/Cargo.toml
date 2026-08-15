@@ -1,7 +1,7 @@
 [package]
 name = "hotdownloader"
 version = "1.0.3"
-description = "音乐下载器"
+description = "跨平台音乐下载器"
 authors = ["lerdb"]
 license = "Apache-2.0"
 repository = "https://github.com/lerdb/HotDownloader"
