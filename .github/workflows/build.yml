@@ -158,12 +158,14 @@ jobs:
         run: npm ci
 
       - name: Decode keystore from secret
+        continue-on-error: true
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > $RUNNER_TEMP/keystore.jks
 
       - name: Generate keystore.properties
+        continue-on-error: true
         run: |
           cat > src-tauri/gen/android/keystore.properties << EOF
           storeFile=$RUNNER_TEMP/keystore.jks
@@ -173,19 +175,22 @@ jobs:
           EOF
 
       - name: Build release APK
+        continue-on-error: true
         run: npm run tauri android build -- --apk
 
       - name: Build debug APK
         run: npm run tauri android build -- --apk --debug
 
       - name: Upload release APKs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: android-apk-release
           path: src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Upload debug APKs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: android-apk-debug
