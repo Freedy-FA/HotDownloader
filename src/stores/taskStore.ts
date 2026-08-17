@@ -58,6 +58,22 @@ export const useTaskStore = defineStore('tasks', () => {
         }
     }
 
+    /**
+     * 检查同一首歌曲的同一音质是否已存在未清理的任务。
+     * 命中返回已存在任务的状态，未命中返回 null。
+     * 注意：降级会把 task.quality 改为实际品质，因此匹配的是 task.quality（实际）而非期望品质。
+     */
+    function findDuplicate(songId: string, quality: string): TaskRecord | null {
+        return (
+            tasks.value.find(
+                (t) =>
+                    t.songId === songId &&
+                    t.quality === quality &&
+                    t.status !== 'error'
+            ) ?? null
+        )
+    }
+
     // ---- 任务操作 ----
     function addTask(task: TaskRecord) {
         tasks.value.push(task)
@@ -74,6 +90,7 @@ export const useTaskStore = defineStore('tasks', () => {
             songTitle: task.songTitle,
             artist: task.artist,
             album: task.album,
+            coverUrl: task.coverUrl,
         }).catch((e: any) => {
             console.error('添加任务失败:', e)
             notify()?.error({ title: '添加任务失败', description: e?.message || String(e), duration: 3000 })
@@ -314,5 +331,6 @@ export const useTaskStore = defineStore('tasks', () => {
         retryTask,
         errorTask,
         setupListeners,
+        findDuplicate,
     }
 })

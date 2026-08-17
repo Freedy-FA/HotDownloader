@@ -79,6 +79,25 @@ pub fn parse_qq_session(cookie: &str) -> Option<QqSession> {
     })
 }
 
+/// 把 Cookie 列表拼成 `k=v; k=v`，供请求头和设置保存使用。
+pub fn format_cookie_header(pairs: &[(String, String)]) -> String {
+    let mut seen = HashMap::new();
+    for (name, value) in pairs {
+        let key = name.trim();
+        if key.is_empty() {
+            continue;
+        }
+        seen.insert(key.to_string(), value.trim().to_string());
+    }
+    let mut names: Vec<String> = seen.keys().cloned().collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|name| format!("{}={}", name, seen[&name]))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +130,15 @@ mod tests {
     fn rejects_empty() {
         assert!(parse_qq_session("").is_none());
         assert!(parse_qq_session("   ").is_none());
+    }
+
+    #[test]
+    fn format_cookie_header_sorts_and_dedups() {
+        let header = format_cookie_header(&[
+            ("qm_keyst".into(), "abc".into()),
+            ("uin".into(), "o123".into()),
+            ("uin".into(), "o456".into()),
+        ]);
+        assert_eq!(header, "qm_keyst=abc; uin=o456");
     }
 }

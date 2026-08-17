@@ -39,6 +39,7 @@ pub struct SongInfo {
     pub artist: String,
     pub album: String,
     pub quality: String,
+    pub cover_url: String,
 }
 
 /// 单个任务的上下文信息
@@ -584,6 +585,17 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                 &saf_folder_uri,
             )
             .await;
+            save_cover_art(
+                &app_handle,
+                is_saf,
+                &download_dir,
+                &saf_file_uri,
+                &ctx.song_info.cover_url,
+                &ctx.song_info.title,
+                &ctx.song_info.artist,
+                &ctx.song_info.album,
+            )
+            .await;
             let actual_quality =
                 crate::utils::quality::quality_label_from_filename(&actual_quality_filename);
             let requested_quality =
@@ -715,6 +727,17 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                     is_saf,
                     &download_dir,
                     &saf_folder_uri,
+                )
+                .await;
+                save_cover_art(
+                    &app_handle,
+                    is_saf,
+                    &download_dir,
+                    &saf_file_uri,
+                    &ctx.song_info.cover_url,
+                    &ctx.song_info.title,
+                    &ctx.song_info.artist,
+                    &ctx.song_info.album,
                 )
                 .await;
                 let actual_quality =
@@ -934,4 +957,216 @@ fn write_saf_lrc(
             .map_err(|e| format!("写入 SAF 歌词失败: {}", e))?;
         Ok(())
     }
+}
+
+/// 下载封面图字节并嵌入音频标签。
+/// 普通模式与 SAF（Android）模式均支持：SAF 模式通过 SAF 文件 URI 打开为可读写
+/// 文件句柄，由 lofty 原地修改标签。
+async fn save_cover_art(
+    app_handle: &AppHandle,
+    is_saf: bool,
+    audio_path: &str,
+    saf_file_uri: &Option<String>,
+    cover_url: &str,
+    title: &str,
+    artist: &str,
+    album: &str,
+) {
+    if cover_url.is_empty() {
+        log::debug!("封面 URL 为空，跳过封面嵌入: {}", audio_path);
+        return;
+    }
+
+    let bytes = match fetch_cover_bytes(cover_url).await {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!("获取封面失败 {}: {}", cover_url, e);
+            return;
+        }
+    };
+    if bytes.is_empty() {
+        log::warn!("封面数据为空，跳过嵌入: {}", cover_url);
+        return;
+    }
+
+    let result = if is_saf {
+        embed_cover_art_saf(app_handle, saf_file_uri, &bytes, title, artist, album)
+    } else {
+        embed_cover_art_path(audio_path, &bytes, title, artist, album)
+    };
+
+    match result {
+        Ok(()) => log::info!("已嵌入封面与标签: {}", audio_path),
+        Err(e) => log::warn!("嵌入封面失败 {}: {}", audio_path, e),
+    }
+}
+
+/// 下载封面图片字节
+async fn fetch_cover_bytes(url: &str) -> Result<Vec<u8>, String> {
+    let resp = DOWNLOAD_CLIENT
+        .get(url)
+        .header("Referer", "https://y.qq.com")
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("封面响应状态: {}", resp.status()));
+    }
+    let body = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("读取封面失败: {}", e))?;
+    Ok(body.to_vec())
+}
+
+/// 普通模式：用文件路径读写标签
+fn embed_cover_art_path(
+    audio_path: &str,
+    cover_bytes: &[u8],
+    title: &str,
+    artist: &str,
+    album: &str,
+) -> Result<(), String> {
+    use lofty::config::WriteOptions;
+    use lofty::file::{AudioFile, TaggedFileExt};
+
+    let path = std::path::Path::new(audio_path);
+    let mut tagged_file = lofty::read_from_path(path)
+        .map_err(|e| format!("读取音频失败: {}", e))?;
+
+    ensure_primary_tag(&mut tagged_file);
+
+    let tag = tagged_file
+        .primary_tag_mut()
+        .ok_or_else(|| "无主标签可写".to_string())?;
+    set_tag_fields(tag, cover_bytes, title, artist, album);
+
+    tagged_file
+        .save_to_path(path, WriteOptions::default())
+        .map_err(|e| format!("保存标签失败: {}", e))?;
+    Ok(())
+}
+
+/// SAF（Android）模式：读取整个 SAF 文件字节，在内存中用 lofty 修改标签，
+/// 然后全量写回。避免 SAF 句柄 truncate 语义不确定的风险。
+#[cfg(target_os = "android")]
+fn embed_cover_art_saf(
+    app_handle: &AppHandle,
+    saf_file_uri: &Option<String>,
+    cover_bytes: &[u8],
+    title: &str,
+    artist: &str,
+    album: &str,
+) -> Result<(), String> {
+    use std::io::Cursor;
+
+    let uri_str = saf_file_uri
+        .as_ref()
+        .ok_or_else(|| "缺少 SAF 文件 URI".to_string())?;
+    let api = app_handle.android_fs();
+    let fs_uri = FsUri::from_uri(uri_str.clone());
+
+    // 读取整个文件到内存
+    let data = api
+        .read(&fs_uri)
+        .map_err(|e| format!("读取 SAF 文件失败: {}", e))?;
+    let mut cursor = Cursor::new(data);
+
+    let new_data = embed_cover_in_cursor(&mut cursor, cover_bytes, title, artist, album)?;
+    api.write(&fs_uri, &new_data)
+        .map_err(|e| format!("写回 SAF 文件失败: {}", e))?;
+    Ok(())
+}
+
+/// 在内存游标上完成封面嵌入，返回修改后的字节。桌面/Android 共用，便于桌面编译验证。
+#[allow(dead_code)]
+fn embed_cover_in_cursor(
+    cursor: &mut std::io::Cursor<Vec<u8>>,
+    cover_bytes: &[u8],
+    title: &str,
+    artist: &str,
+    album: &str,
+) -> Result<Vec<u8>, String> {
+    use lofty::config::WriteOptions;
+    use lofty::file::{AudioFile, TaggedFileExt};
+    use std::io::{Seek, SeekFrom};
+
+    let mut tagged_file = lofty::probe::Probe::new(&mut *cursor)
+        .guess_file_type()
+        .map_err(|e| format!("探测音频类型失败: {}", e))?
+        .read()
+        .map_err(|e| format!("读取音频失败: {}", e))?;
+    ensure_primary_tag(&mut tagged_file);
+
+    let tag = tagged_file
+        .primary_tag_mut()
+        .ok_or_else(|| "无主标签可写".to_string())?;
+    set_tag_fields(tag, cover_bytes, title, artist, album);
+
+    cursor
+        .seek(SeekFrom::Start(0))
+        .map_err(|e| format!("文件定位失败: {}", e))?;
+    tagged_file
+        .save_to(cursor, WriteOptions::default())
+        .map_err(|e| format!("保存标签失败: {}", e))?;
+
+    Ok(std::mem::take(cursor.get_mut()))
+}
+
+/// SAF 模式在非 Android 平台的占位实现（编译占位，运行时不会走到）
+#[cfg(not(target_os = "android"))]
+fn embed_cover_art_saf(
+    _app_handle: &AppHandle,
+    _saf_file_uri: &Option<String>,
+    _cover_bytes: &[u8],
+    _title: &str,
+    _artist: &str,
+    _album: &str,
+) -> Result<(), String> {
+    Err("SAF 模式仅在 Android 上可用".to_string())
+}
+
+/// 若不存在主标签，按文件类型创建并插入一个空标签
+fn ensure_primary_tag(tagged_file: &mut lofty::file::TaggedFile) {
+    use lofty::file::TaggedFileExt;
+    use lofty::tag::{Tag, TagType};
+    if tagged_file.primary_tag().is_some() {
+        return;
+    }
+    let tag_type = tagged_file.primary_tag_type();
+    if tag_type == TagType::Id3v2 {
+        tagged_file.insert_tag(Tag::new(TagType::Id3v2));
+    } else {
+        tagged_file.insert_tag(Tag::new(tag_type));
+    }
+}
+
+/// 写入文本字段与封面
+fn set_tag_fields(
+    tag: &mut lofty::tag::Tag,
+    cover_bytes: &[u8],
+    title: &str,
+    artist: &str,
+    album: &str,
+) {
+    use lofty::picture::{MimeType, Picture, PictureType};
+    use lofty::tag::Accessor;
+
+    if !title.is_empty() {
+        tag.set_title(title.to_string());
+    }
+    if !artist.is_empty() {
+        tag.set_artist(artist.to_string());
+    }
+    if !album.is_empty() {
+        tag.set_album(album.to_string());
+    }
+    tag.remove_picture_type(PictureType::CoverFront);
+    let pic = Picture::new_unchecked(
+        PictureType::CoverFront,
+        Some(MimeType::Jpeg),
+        None,
+        cover_bytes.to_vec(),
+    );
+    tag.push_picture(pic);
 }

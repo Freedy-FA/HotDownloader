@@ -115,6 +115,16 @@ export function useDownloadActions() {
                 return
             }
 
+            // 同一歌曲同一音质已有未清理任务时跳过，避免重复下载
+            if (taskStore.findDuplicate(song.id, resolved.quality)) {
+                notification.info({
+                    title: '已存在下载任务',
+                    description: `歌曲“${song.title}”的“${resolved.quality}”音质已在任务列表中`,
+                    duration: 3000,
+                })
+                return
+            }
+
             const taskId = generateTaskId()
             taskStore.addTask({
                 id: taskId,
@@ -191,6 +201,7 @@ export function useDownloadActions() {
             }
 
             let errorCount = 0
+            let skippedCount = 0
             for (const song of songs) {
                 const resolved = resolveQualityForSong(song, quality)
                 if (!resolved) {
@@ -216,6 +227,12 @@ export function useDownloadActions() {
                     continue
                 }
 
+                // 同一歌曲同一音质已有未清理任务时跳过
+                if (taskStore.findDuplicate(song.id, resolved.quality)) {
+                    skippedCount++
+                    continue
+                }
+
                 const taskId = generateTaskId()
                 taskStore.addTask({
                     id: taskId,
@@ -237,6 +254,10 @@ export function useDownloadActions() {
 
             if (errorCount > 0) {
                 notification.warning({ title: '批量下载', description: `${errorCount} 首歌曲无可用音质，已标记为错误` })
+            }
+
+            if (skippedCount > 0) {
+                notification.info({ title: '批量下载', description: `${skippedCount} 首歌曲已存在相同音质的任务，已跳过`, duration: 3000 })
             }
 
             if (settingsStore.settings.jumpToTask) {

@@ -72,6 +72,7 @@ impl DownloadEngine {
         song_title: String,
         artist: String,
         album: String,
+        cover_url: String,
     ) {
         let controller = TaskController {
             cancel_token: CancellationToken::new(),
@@ -100,6 +101,7 @@ impl DownloadEngine {
                 artist,
                 album,
                 quality, // 传入品质
+                cover_url,
             },
             final_path: controller.final_path.clone(), // 共享路径
         };

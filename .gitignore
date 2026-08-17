@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# 构建产物与本地签名（不应入库）
+dist-apk/
+*.apk
+*.aab
+*.keystore
+*.jks
+src-tauri/gen/android/keystore.properties

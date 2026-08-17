@@ -3,12 +3,15 @@
   "identifier": "default",
   "description": "默认权限",
   "windows": [
-    "main"
+    "main",
+    "qq-login"
   ],
   "permissions": [
     "core:default",
     "core:window:allow-close",
     "core:window:allow-destroy",
+    "core:window:allow-set-focus",
+    "core:webview:allow-create-webview-window",
     "dialog:default",
     "store:default",
     "log:default",
