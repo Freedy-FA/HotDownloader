@@ -22,11 +22,17 @@ pub fn emit_completed(
     task_id: &str,
     final_path: &str,
     saf_folder_uri: Option<String>,
+    quality: &str,
+    filename: &str,
+    requested_quality: Option<&str>,
 ) {
     let payload = events::DownloadCompletedPayload {
         task_id: task_id.to_string(),
         final_path: final_path.to_string(),
         saf_folder_uri,
+        quality: quality.to_string(),
+        filename: filename.to_string(),
+        requested_quality: requested_quality.map(|s| s.to_string()),
     };
     let _ = app_handle.emit(events::DOWNLOAD_COMPLETED, payload);
 }
@@ -45,4 +51,20 @@ pub fn emit_link_expired(app_handle: &AppHandle, task_id: &str, current_offset: 
         current_offset,
     };
     let _ = app_handle.emit(events::DOWNLOAD_LINK_EXPIRED, payload);
+}
+
+pub fn emit_quality_changed(
+    app_handle: &AppHandle,
+    task_id: &str,
+    requested_quality: &str,
+    actual_quality: &str,
+    filename: &str,
+) {
+    let payload = events::DownloadQualityChangedPayload {
+        task_id: task_id.to_string(),
+        requested_quality: requested_quality.to_string(),
+        actual_quality: actual_quality.to_string(),
+        filename: filename.to_string(),
+    };
+    let _ = app_handle.emit(events::DOWNLOAD_QUALITY_CHANGED, payload);
 }

@@ -61,12 +61,15 @@ pub struct TaskContext {
     pub final_path: Arc<Mutex<Option<String>>>, // 与控制器共享的文件路径
 }
 
-/// 重试获取下载链接（网络错误时最多尝试 3 次）
+/// 重试获取下载链接。
+/// 仅对瞬时网络错误重试；平台拒绝（104003 / 无法获取下载链接）立即返回，
+/// 由 `get_download_link` 内部走加密回退。
+/// 返回 (url, ekey, 实际品质文件名)。
 async fn fetch_download_link_with_retry(
     song_id: &str,
     filename: &str,
     task_id: &str,
-) -> Result<(String, String), String> {
+) -> Result<(String, String, String), String> {
     let mut last_err = String::new();
     for attempt in 0..3 {
         match api::get_download_link(song_id, filename).await {
@@ -79,9 +82,11 @@ async fn fetch_download_link_with_retry(
                     attempt + 1,
                     last_err
                 );
+                if !crate::utils::quality::is_retryable_link_error(&last_err) {
+                    return Err(last_err);
+                }
                 if attempt < 2 {
                     tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
-                    // 1s, 2s, 4s
                 }
             }
         }
@@ -107,59 +112,58 @@ async fn wait_for_resume_async(controller: &TaskController) -> bool {
     }
 }
 
-/// 实际执行下载的函数
-pub async fn download_task(ctx: TaskContext, controller: TaskController, app_handle: AppHandle) {
-    // 1. 构建最终保存路径（只需一次）
-    let (is_saf, download_dir, saf_folder_uri) = {
-        if !ctx.save_path.is_empty() {
-            (false, ctx.save_path.clone(), None)
-        } else {
-            let (dir, template, saf_uri) = get_download_settings(&app_handle).await;
-            if dir == "saf://" && cfg!(target_os = "android") && saf_uri.is_some() {
-                let fname = filename::build_filename(&template, &ctx.song_info);
-                let raw_ext = Path::new(&ctx.quality_filename)
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("flac");
-                let ext = map_decrypted_extension(raw_ext);
-                let file_name = format!("{}.{}", fname, ext);
-                (true, file_name, saf_uri)
-            } else {
-                let fname = filename::build_filename(&template, &ctx.song_info);
-                let raw_ext = Path::new(&ctx.quality_filename)
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("flac");
-                // 映射解密后的扩展名
-                let ext = map_decrypted_extension(raw_ext);
-                let full_path = Path::new(&dir).join(format!("{}.{}", fname, ext));
-                (false, full_path.to_string_lossy().to_string(), None)
-            }
-        }
-    };
-
-    log::info!("任务 {} 开始下载，文件路径: {}", ctx.task_id, download_dir);
-
-    // 2. 创建目录并验证（仅普通模式需要）
-    if !is_saf {
-        let parent_dir = Path::new(&download_dir).parent().unwrap_or(Path::new("."));
-        if !parent_dir.exists() {
-            if let Err(e) = fs::create_dir_all(parent_dir) {
-                log::error!("创建下载目录失败: {}", e);
-                progress::emit_error(&app_handle, &ctx.task_id, "下载目录无法访问");
-                return;
-            }
-        }
+/// 按实际品质文件名计算最终保存路径。
+/// 降级可能把 `.mp3` 换成 `.mgg`，必须用实际文件名决定扩展名。
+fn resolve_save_target(
+    explicit_path: &str,
+    settings_dir: &str,
+    template: &str,
+    saf_uri: &Option<String>,
+    song_info: &SongInfo,
+    quality_filename: &str,
+) -> (bool, String, Option<String>) {
+    if !explicit_path.is_empty() {
+        return (false, explicit_path.to_string(), None);
     }
 
-    // 3. 初始化已下载偏移量
+    let fname = filename::build_filename(template, song_info);
+    let raw_ext = Path::new(quality_filename)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("flac");
+    let ext = map_decrypted_extension(raw_ext);
+
+    if settings_dir == "saf://" && cfg!(target_os = "android") && saf_uri.is_some() {
+        (true, format!("{}.{}", fname, ext), saf_uri.clone())
+    } else {
+        let full_path = Path::new(settings_dir).join(format!("{}.{}", fname, ext));
+        (false, full_path.to_string_lossy().to_string(), None)
+    }
+}
+
+/// 实际执行下载的函数
+pub async fn download_task(ctx: TaskContext, controller: TaskController, app_handle: AppHandle) {
+    // 1. 先读设置；真正的保存路径等拿到实际品质文件名后再建
+    let (settings_dir, template, saf_uri) = if ctx.save_path.is_empty() {
+        get_download_settings(&app_handle).await
+    } else {
+        (String::new(), String::new(), None)
+    };
+
+    let mut is_saf = false;
+    let mut download_dir = String::new();
+    let mut saf_folder_uri: Option<String> = None;
+    let mut path_ready = false;
+    let mut actual_quality_filename = ctx.quality_filename.clone();
+
+    // 2. 初始化已下载偏移量
     let mut downloaded = ctx.downloaded_offset;
 
-    // 4. 链接与解密密钥（每次循环可能重新获取）
+    // 3. 链接与解密密钥（每次循环可能重新获取）
     let mut url = String::new();
     let mut key = String::new();
 
-    // 5. 文件句柄（使用 BufWriter 提升写入性能）
+    // 4. 文件句柄（使用 BufWriter 提升写入性能）
     let mut file: Option<BufWriter<fs::File>> = None;
 
     let mut saf_file_uri: Option<String> = None;
@@ -187,22 +191,78 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             match fetch_download_link_with_retry(&ctx.song_id, &ctx.quality_filename, &ctx.task_id)
                 .await
             {
-                Ok((new_url, new_key)) => {
+                Ok((new_url, new_key, used_filename)) => {
                     url = new_url;
                     key = new_key;
+                    if used_filename != actual_quality_filename {
+                        let requested = crate::utils::quality::quality_label_from_filename(
+                            &actual_quality_filename,
+                        );
+                        let actual =
+                            crate::utils::quality::quality_label_from_filename(&used_filename);
+                        log::info!(
+                            "任务 {} 品质回退: {} -> {}",
+                            ctx.task_id,
+                            requested,
+                            actual
+                        );
+                        progress::emit_quality_changed(
+                            &app_handle,
+                            &ctx.task_id,
+                            &requested,
+                            &actual,
+                            &used_filename,
+                        );
+                        actual_quality_filename = used_filename;
+                        file = None;
+                        downloaded = 0;
+                        path_ready = false;
+                    }
                     log::info!("任务 {} 获取到新下载链接", ctx.task_id);
                 }
                 Err(e) => {
                     log::error!("任务 {} 最终获取下载链接失败: {}", ctx.task_id, e);
-                    progress::emit_error(&app_handle, &ctx.task_id, "网络错误，请稍后重试");
+                    let user_msg = if crate::utils::quality::is_retryable_link_error(&e) {
+                        "网络错误，请稍后重试".to_string()
+                    } else {
+                        e
+                    };
+                    progress::emit_error(&app_handle, &ctx.task_id, &user_msg);
                     break 'download;
+                }
+            }
+        }
+
+        if !path_ready {
+            let (saf, dir, uri) = resolve_save_target(
+                &ctx.save_path,
+                &settings_dir,
+                &template,
+                &saf_uri,
+                &ctx.song_info,
+                &actual_quality_filename,
+            );
+            is_saf = saf;
+            download_dir = dir;
+            saf_folder_uri = uri;
+            path_ready = true;
+            log::info!("任务 {} 开始下载，文件路径: {}", ctx.task_id, download_dir);
+
+            if !is_saf {
+                let parent_dir = Path::new(&download_dir).parent().unwrap_or(Path::new("."));
+                if !parent_dir.exists() {
+                    if let Err(e) = fs::create_dir_all(parent_dir) {
+                        log::error!("创建下载目录失败: {}", e);
+                        progress::emit_error(&app_handle, &ctx.task_id, "下载目录无法访问");
+                        break 'download;
+                    }
                 }
             }
         }
 
         // 根据是否需要解密创建解密上下文
         let need_decrypt = {
-            let ext = Path::new(&ctx.quality_filename)
+            let ext = Path::new(&actual_quality_filename)
                 .extension()
                 .and_then(|s| s.to_str())
                 .unwrap_or("");
@@ -516,11 +576,26 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             } else {
                 download_dir.clone()
             };
+            save_lyrics_sidecar(
+                &app_handle,
+                &ctx.song_id,
+                is_saf,
+                &download_dir,
+                &saf_folder_uri,
+            )
+            .await;
+            let actual_quality =
+                crate::utils::quality::quality_label_from_filename(&actual_quality_filename);
+            let requested_quality =
+                crate::utils::quality::quality_label_from_filename(&ctx.quality_filename);
             progress::emit_completed(
                 &app_handle,
                 &ctx.task_id,
                 &final_display_path,
                 saf_folder_uri.clone(),
+                &actual_quality,
+                &actual_quality_filename,
+                Some(&requested_quality),
             );
             break 'download;
         }
@@ -629,17 +704,31 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                     }
                 }
                 log::info!("下载完成: {}", download_dir);
-                // 完成时发送事件，SAF 模式下 final_path 改为完整 URI
                 let final_display_path = if is_saf {
                     saf_file_uri.clone().unwrap_or_else(|| download_dir.clone())
                 } else {
                     download_dir.clone()
                 };
+                save_lyrics_sidecar(
+                    &app_handle,
+                    &ctx.song_id,
+                    is_saf,
+                    &download_dir,
+                    &saf_folder_uri,
+                )
+                .await;
+                let actual_quality =
+                    crate::utils::quality::quality_label_from_filename(&actual_quality_filename);
+                let requested_quality =
+                    crate::utils::quality::quality_label_from_filename(&ctx.quality_filename);
                 progress::emit_completed(
                     &app_handle,
                     &ctx.task_id,
                     &final_display_path,
                     saf_folder_uri.clone(),
+                    &actual_quality,
+                    &actual_quality_filename,
+                    Some(&requested_quality),
                 );
                 break 'download;
             }
@@ -698,6 +787,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             } else {
                 log::info!("文件已成功删除: {}", download_dir);
             }
+            delete_sidecar_lrc(&download_dir);
         }
     }
 }
@@ -760,5 +850,88 @@ pub(crate) fn map_decrypted_extension(ext: &str) -> &str {
         "mflac" => "flac",
         // 未知则保持原样
         _ => ext,
+    }
+}
+
+/// 删除音频同名的 `.lrc`，文件不存在时忽略。
+pub(crate) fn delete_sidecar_lrc(audio_path: &str) {
+    let lrc = crate::utils::quality::sidecar_lrc_path(audio_path);
+    match fs::remove_file(&lrc) {
+        Ok(()) => log::info!("已删除歌词: {}", lrc.display()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log::warn!("删除歌词失败 {}: {}", lrc.display(), e),
+    }
+}
+
+/// 下载完成后写入同名 LRC。失败只记日志，不影响音频任务。
+fn lyrics_enabled(app_handle: &AppHandle) -> bool {
+    use crate::storage::store_wrapper;
+    store_wrapper::load_string(app_handle, "settings")
+        .ok()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+        .and_then(|v| v.get("downloadLyrics")?.as_bool())
+        .unwrap_or(true)
+}
+
+async fn save_lyrics_sidecar(
+    app_handle: &AppHandle,
+    song_id: &str,
+    is_saf: bool,
+    audio_path: &str,
+    saf_folder_uri: &Option<String>,
+) {
+    if !lyrics_enabled(app_handle) {
+        return;
+    }
+    match crate::commands::api::fetch_lyrics_text(song_id).await {
+        Ok(lyric) => {
+            if is_saf {
+                if let Err(e) = write_saf_lrc(app_handle, audio_path, saf_folder_uri, &lyric) {
+                    log::warn!("写入 SAF 歌词失败: {}", e);
+                }
+            } else {
+                let lrc_path = crate::utils::quality::sidecar_lrc_path(audio_path);
+                if let Err(e) = fs::write(&lrc_path, lyric.as_bytes()) {
+                    log::warn!("写入歌词失败 {}: {}", lrc_path.display(), e);
+                } else {
+                    log::info!("已写入歌词: {}", lrc_path.display());
+                }
+            }
+        }
+        Err(e) => log::warn!("获取歌词失败 ({}): {}", song_id, e),
+    }
+}
+
+fn write_saf_lrc(
+    app_handle: &AppHandle,
+    audio_file_name: &str,
+    saf_folder_uri: &Option<String>,
+    lyric: &str,
+) -> Result<(), String> {
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app_handle, audio_file_name, saf_folder_uri, lyric);
+        Ok(())
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        let folder = saf_folder_uri.as_ref().ok_or("缺少 SAF 目录")?;
+        let parent_uri = FsUri::from_json_str(folder).map_err(|e| e.to_string())?;
+        let lrc_name = crate::utils::quality::sidecar_lrc_path(audio_file_name);
+        let api = app_handle.android_fs();
+        let file_uri = match api.resolve_file_uri(&parent_uri, &lrc_name) {
+            Ok(uri) => uri,
+            Err(_) => api
+                .create_new_file(&parent_uri, &lrc_name, Some("application/octet-stream"))
+                .map_err(|e| e.to_string())?,
+        };
+        let mut f = api
+            .open_file_writable(&file_uri)
+            .map_err(|e| e.to_string())?;
+        use std::io::Write;
+        f.write_all(lyric.as_bytes())
+            .map_err(|e| format!("写入 SAF 歌词失败: {}", e))?;
+        Ok(())
     }
 }

@@ -377,11 +377,13 @@ impl DownloadEngine {
                     match fs::remove_file(&path) {
                         Ok(()) => {
                             log::info!("已删除文件: {}", path);
+                            crate::download::task::delete_sidecar_lrc(&path);
                         }
                         Err(e) => {
                             // 文件不存在视为删除成功，避免误报错误
                             if e.kind() == ErrorKind::NotFound {
                                 log::warn!("文件不存在，无需删除: {}", path);
+                                crate::download::task::delete_sidecar_lrc(&path);
                             } else {
                                 log::error!("删除文件失败 {}: {}", path, e);
                                 self.final_paths.lock().await.remove(task_id);

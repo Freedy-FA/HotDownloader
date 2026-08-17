@@ -18,6 +18,14 @@
                     <NamingTemplate />
                     <ConcurrencySetting />
                     <JumpToTaskSetting />
+                    <LyricSetting />
+                </n-form>
+            </div>
+
+            <div class="settings-section">
+                <h2 class="section-title">音源管理</h2>
+                <n-form label-placement="top">
+                    <SourceSetting />
                 </n-form>
             </div>
         </template>
@@ -31,6 +39,8 @@
                 <NamingTemplate />
                 <ConcurrencySetting />
                 <JumpToTaskSetting />
+                <LyricSetting />
+                <SourceSetting />
                 <ClearHistoryButton />
             </n-form>
         </template>
@@ -88,6 +98,8 @@ import DirectorySetting from '../components/settings/DirectorySetting.vue'
 import NamingTemplate from '../components/settings/NamingTemplate.vue'
 import ConcurrencySetting from '../components/settings/ConcurrencySetting.vue'
 import JumpToTaskSetting from '../components/settings/JumpToTaskSetting.vue'
+import LyricSetting from '../components/settings/LyricSetting.vue'
+import SourceSetting from '../components/settings/SourceSetting.vue'
 import ClearHistoryButton from '../components/settings/ClearHistoryButton.vue'
 import * as musicApi from '../api/musicApi'
 import type { UpdateInfo } from '../types'

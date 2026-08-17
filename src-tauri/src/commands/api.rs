@@ -1,6 +1,5 @@
 use once_cell::sync::Lazy;
 use serde_json::{json, Value};
-use std::path::Path;
 use tauri::command;
 use url::Url;
 
@@ -281,13 +280,19 @@ fn build_qualities(file: &Value, vs: &Value) -> Vec<Value> {
 /// 加密文件（.mgg / .mflac）专用，同时获取 purl 和 ekey
 /// https://github.com/chrisdong/FileHub/blob/e1d752e1f29f877b7c895ae5aaff32a179fad051/root/importURLs/lxmusic/HeiMusic%E8%81%9A%E5%90%88%E6%BA%90_v1.1.5.js#L287
 async fn fetch_encrypted_link(song_id: &str, filename: &str) -> Result<(String, String), String> {
+    let session = crate::utils::auth::current_session();
+    let qq = session
+        .as_ref()
+        .map(|s| s.uin.as_str())
+        .unwrap_or("0");
     let request_body = json!({
         "comm": {
             "ct": "19",
             "cv": "0",
             "guid": "",
             "tmeAppID": "qqmusic",
-            "qq": "0"
+            "qq": qq,
+            "uin": qq
         },
         "music.vkey.GetEVkey.CgiGetHotVkey": {
             "module": "music.vkey.GetEVkey",
@@ -311,9 +316,15 @@ async fn fetch_encrypted_link(song_id: &str, filename: &str) -> Result<(String, 
         }
     });
 
-    let resp = CLIENT
+    let mut req = CLIENT
         .post("https://ut.y.qq.com/cgi-bin/musicu.fcg")
         .header("Content-Type", "application/json")
+        .header("Referer", "https://y.qq.com/")
+        .header("Origin", "https://y.qq.com");
+    if let Some(session) = session.as_ref() {
+        req = req.header("Cookie", session.cookie.as_str());
+    }
+    let resp = req
         .json(&request_body)
         .send()
         .await
@@ -366,12 +377,18 @@ async fn fetch_encrypted_link(song_id: &str, filename: &str) -> Result<(String, 
 /// 非加密文件专用，仅获取 purl，无需密钥
 /// https://github.com/lyswhut/lx-music-source/blob/55eb9881dad6ca895505352f3a0a7d1dfa3444e0/src/apis/tx.js#L30
 async fn fetch_plain_link(song_id: &str, filename: &str) -> Result<(String, String), String> {
+    let session = crate::utils::auth::current_session();
+    let uin = session
+        .as_ref()
+        .map(|s| s.uin.as_str())
+        .unwrap_or("0");
     let request_body = json!({
         "comm": {
             "ct": 24,
             "cv": 0,
             "tmeAppID": "qqmusic",
-            "format": "json"
+            "format": "json",
+            "uin": uin
         },
         "req_0": {
             "module": "vkey.GetVkeyServer",
@@ -380,14 +397,23 @@ async fn fetch_plain_link(song_id: &str, filename: &str) -> Result<(String, Stri
                 "guid": "10000",
                 "filename": [filename],
                 "songmid": [song_id],
-                "songtype": [0]
+                "songtype": [0],
+                "uin": uin,
+                "loginflag": if session.is_some() { 1 } else { 0 },
+                "platform": "20"
             }
         }
     });
 
-    let resp = CLIENT
+    let mut req = CLIENT
         .post("https://u.y.qq.com/cgi-bin/musicu.fcg")
         .header("Content-Type", "application/json")
+        .header("Referer", "https://y.qq.com/")
+        .header("Origin", "https://y.qq.com");
+    if let Some(session) = session.as_ref() {
+        req = req.header("Cookie", session.cookie.as_str());
+    }
+    let resp = req
         .json(&request_body)
         .send()
         .await
@@ -435,33 +461,125 @@ async fn fetch_plain_link(song_id: &str, filename: &str) -> Result<(String, Stri
     Ok((full_url, String::new()))
 }
 
+/// 按文件扩展名选择 vkey 接口。
+async fn get_download_link_for_filename(
+    song_id: &str,
+    filename: &str,
+) -> Result<(String, String, String), String> {
+    if crate::utils::quality::is_encrypted_filename(filename) {
+        let (url, key) = fetch_encrypted_link(song_id, filename).await?;
+        Ok((url, key, filename.to_string()))
+    } else {
+        let (url, key) = fetch_plain_link(song_id, filename).await?;
+        Ok((url, key, filename.to_string()))
+    }
+}
+
 /// 获取下载链接与解密密钥
 /// 参数：song_id 为歌曲 mid，filename 为品质文件名（如 M800001abc.mp3）
-/// 返回 (完整下载链接, 解密密钥)，非加密文件密钥为空
-/// 核心函数：获取下载链接和密钥，供下载模块调用
-/// 获取下载链接与解密密钥（对外统一入口）
+/// 返回 (完整下载链接, 解密密钥, 实际使用的品质文件名)
+///
+/// 未登录时普通音质（mp3/m4a/ape）的 `CgiGetVkey` 会返回 104003。
+/// 此时只尝试比请求更低的加密音质（ogg），不会升到 flac。
 pub(crate) async fn get_download_link(
     song_id: &str,
     filename: &str,
-) -> Result<(String, String), String> {
-    let ext = Path::new(filename)
-        .extension()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_lowercase())
-        .unwrap_or_default();
+) -> Result<(String, String, String), String> {
+    let primary = match get_download_link_for_filename(song_id, filename).await {
+        Ok((url, key, used)) => crate::utils::quality::LinkAttempt::Ok {
+            url,
+            key,
+            filename: used,
+        },
+        Err(error) => crate::utils::quality::LinkAttempt::Err {
+            filename: filename.to_string(),
+            error,
+        },
+    };
 
-    if ext == "mgg" || ext == "mflac" {
-        fetch_encrypted_link(song_id, filename).await
-    } else {
-        fetch_plain_link(song_id, filename).await
+    let should_fallback = matches!(
+        &primary,
+        crate::utils::quality::LinkAttempt::Err { error, .. }
+            if crate::utils::quality::is_unavailable_link_error(error)
+    );
+
+    let mut fallback_attempts = Vec::new();
+    if should_fallback {
+        for fallback in crate::utils::quality::lower_encrypted_fallbacks(filename) {
+            log::info!(
+                "品质 {} 无法获取链接，尝试加密回退 {}",
+                filename,
+                fallback
+            );
+            match fetch_encrypted_link(song_id, &fallback).await {
+                Ok((url, key)) => fallback_attempts.push(crate::utils::quality::LinkAttempt::Ok {
+                    url,
+                    key,
+                    filename: fallback,
+                }),
+                Err(error) => fallback_attempts.push(crate::utils::quality::LinkAttempt::Err {
+                    filename: fallback,
+                    error,
+                }),
+            }
+            if matches!(
+                fallback_attempts.last(),
+                Some(crate::utils::quality::LinkAttempt::Ok { .. })
+            ) {
+                break;
+            }
+        }
     }
+
+    crate::utils::quality::resolve_link_attempt(filename, primary, &fallback_attempts)
 }
 
 #[command]
 pub async fn fetch_download_link(song_id: String, filename: String) -> Result<String, String> {
-    let (url, key) = get_download_link(&song_id, &filename).await?;
-    let result = json!({ "url": url, "key": key });
+    let (url, key, used_filename) = get_download_link(&song_id, &filename).await?;
+    let result = json!({ "url": url, "key": key, "filename": used_filename });
     Ok(result.to_string())
+}
+
+/// 获取歌词（LRC 文本）。
+/// https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg
+pub(crate) async fn fetch_lyrics_text(song_id: &str) -> Result<String, String> {
+    let url = Url::parse_with_params(
+        "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg",
+        &[
+            ("songmid", song_id),
+            ("format", "json"),
+            ("nobase64", "1"),
+            ("g_tk", "5381"),
+            ("loginUin", "0"),
+            ("hostUin", "0"),
+            ("inCharset", "utf8"),
+            ("outCharset", "utf-8"),
+            ("notice", "0"),
+            ("platform", "yqq.json"),
+            ("needNewCode", "0"),
+        ],
+    )
+    .map_err(|e| format!("URL 构建失败: {}", e))?;
+
+    let resp = CLIENT
+        .get(url)
+        .header("Referer", "https://y.qq.com/portal/player.html")
+        .header("Origin", "https://y.qq.com")
+        .send()
+        .await
+        .map_err(|e| format!("网络错误: {}", e))?;
+
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取响应失败: {}", e))?;
+    crate::utils::quality::parse_lyric_json(&text)
+}
+
+#[command]
+pub async fn fetch_lyrics(song_id: String) -> Result<String, String> {
+    fetch_lyrics_text(&song_id).await
 }
 
 /// 获取热搜关键词列表，返回 JSON 数组字符串

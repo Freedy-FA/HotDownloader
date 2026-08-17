@@ -8,8 +8,9 @@ import type {
     DownloadCompletedPayload,
     DownloadErrorPayload,
     DownloadLinkExpiredPayload,
+    DownloadQualityChangedPayload,
 } from '../types'
-import { QUALITY_DOWNGRADE_ORDER } from '../types'
+import { QUALITY_DOWNGRADE_ORDER, buildQualityFilename, extractMediaMid } from '../types'
 import { useSettingsStore } from './settingsStore'
 
 export const useTaskStore = defineStore('tasks', () => {
@@ -162,7 +163,16 @@ export const useTaskStore = defineStore('tasks', () => {
             if (settingsStore.settings.autoDowngrade) {
                 const currentIdx = QUALITY_DOWNGRADE_ORDER.indexOf(task.quality)
                 if (currentIdx >= 0 && currentIdx < QUALITY_DOWNGRADE_ORDER.length - 1) {
-                    task.quality = QUALITY_DOWNGRADE_ORDER[currentIdx + 1]
+                    const nextQuality = QUALITY_DOWNGRADE_ORDER[currentIdx + 1]
+                    const mediaMid = task.mediaMid || extractMediaMid(task.filename) || ''
+                    const nextFilename = buildQualityFilename(nextQuality, mediaMid)
+                    if (!nextFilename) {
+                        task.errorMsg = `无法降级至 ${nextQuality}：缺少对应文件名`
+                        await saveTasks()
+                        return false
+                    }
+                    task.quality = nextQuality
+                    task.filename = nextFilename
                     task.retryCount = 0
                     task.errorMsg = `自动降级至 ${task.quality}`
                     task.downloaded = 0 // 文件不同，必须重新下载
@@ -228,13 +238,36 @@ export const useTaskStore = defineStore('tasks', () => {
             // SAF 模式下 final_path 已经是完整 URI，无需额外处理
             task.filePath = event.payload.final_path
             task.downloaded = task.fileSize
+            if (event.payload.quality) {
+                task.quality = event.payload.quality
+            }
+            if (event.payload.filename) {
+                task.filename = event.payload.filename
+            }
 
             saveTasks()
-            // 成功通知
+            const requested = event.payload.requested_quality
+            const actual = event.payload.quality || task.quality
+            const downgraded = Boolean(requested && actual && requested !== actual)
             notify()?.success({
                 title: '下载完成',
-                description: `歌曲“${task.songTitle}”已下载完成`,
-                duration: 3000
+                description: downgraded
+                    ? `歌曲“${task.songTitle}”${requested} 暂无资源，已降级为 ${actual}`
+                    : `歌曲“${task.songTitle}”已下载完成（${actual}）`,
+                duration: 4000
+            })
+        })
+
+        listen<DownloadQualityChangedPayload>('download-quality-changed', (event) => {
+            const task = tasks.value.find((t) => t.id === event.payload.task_id)
+            if (!task) return
+            task.quality = event.payload.actual_quality
+            task.filename = event.payload.filename
+            saveTasks()
+            notify()?.warning({
+                title: '音质已降级',
+                description: `歌曲“${task.songTitle}”${event.payload.requested_quality} 暂无资源，已降级为 ${event.payload.actual_quality}`,
+                duration: 4000
             })
         })
 

@@ -31,6 +31,7 @@ pub fn run() {
                 Err(_) => 3,
             };
             engine.set_concurrency(max_concurrent);
+            commands::settings::restore_session(app.handle());
             app.manage(engine.clone());
 
             let engine_clone = engine;
@@ -64,6 +65,7 @@ pub fn run() {
             commands::api::fetch_hot_keywords,
             commands::api::fetch_suggestions,
             commands::api::fetch_playlist_songs,
+            commands::api::fetch_lyrics,
             commands::api::check_update,
         ])
         .run(tauri::generate_context!())

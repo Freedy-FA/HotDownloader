@@ -18,6 +18,35 @@ export const ALL_QUALITY_ORDER: string[] = [
 /** 降级顺序：从高到低 */
 export const QUALITY_DOWNGRADE_ORDER: string[] = [...ALL_QUALITY_ORDER].reverse()
 
+/** 品质标签对应的文件名前缀与扩展名，与后端 build_qualities 保持一致 */
+export const QUALITY_FILE_SPEC: Record<string, { prefix: string; ext: string }> = {
+    '48kacc': { prefix: 'C200', ext: '.m4a' },
+    '96kacc': { prefix: 'C400', ext: '.m4a' },
+    '192kacc': { prefix: 'C600', ext: '.m4a' },
+    '96kogg': { prefix: 'O4M0', ext: '.mgg' },
+    '192kogg': { prefix: 'O6M0', ext: '.mgg' },
+    '128kmp3': { prefix: 'M500', ext: '.mp3' },
+    '320kmp3': { prefix: 'M800', ext: '.mp3' },
+    ape: { prefix: 'A000', ext: '.ape' },
+    flac: { prefix: 'F0M0', ext: '.mflac' },
+    hires: { prefix: 'RSM1', ext: '.mflac' },
+}
+
+/** 从品质文件名提取 media_mid（4 字符前缀 + mid + 扩展名） */
+export function extractMediaMid(filename: string): string | null {
+    const dot = filename.lastIndexOf('.')
+    const stem = dot >= 0 ? filename.slice(0, dot) : filename
+    if (stem.length <= 4) return null
+    return stem.slice(4)
+}
+
+/** 按品质标签重建文件名；特殊音质（杜比/臻品）无法从 mediaMid 推导，返回 null */
+export function buildQualityFilename(quality: string, mediaMid: string): string | null {
+    const spec = QUALITY_FILE_SPEC[quality]
+    if (!spec || !mediaMid) return null
+    return `${spec.prefix}${mediaMid}${spec.ext}`
+}
+
 export type Quality = string  // 不再限制字面量，兼容所有后端标签
 
 export type TaskStatus = 'waiting' | 'downloading' | 'paused' | 'completed' | 'error'
@@ -29,6 +58,10 @@ export interface Settings {
     namingTemplate: string
     maxConcurrent: number
     jumpToTask: boolean
+    /** 下载完成后写入同名 .lrc */
+    downloadLyrics: boolean
+    /** QQ 音乐网页 Cookie，用于解锁 320kmp3 等需登录音质 */
+    qqCookie: string
     // 新增 SAF 文件夹 URI 和名称
     safFolderUri?: string
     safFolderName?: string
@@ -124,6 +157,16 @@ export interface DownloadCompletedPayload {
     task_id: string
     final_path: string
     saf_folder_uri?: string | null
+    quality?: string
+    filename?: string
+    requested_quality?: string | null
+}
+
+export interface DownloadQualityChangedPayload {
+    task_id: string
+    requested_quality: string
+    actual_quality: string
+    filename: string
 }
 
 export interface DownloadErrorPayload {
@@ -143,6 +186,8 @@ export const DEFAULT_SETTINGS: Settings = {
     namingTemplate: '{song} - {artist}',
     maxConcurrent: 3,
     jumpToTask: true,
+    downloadLyrics: true,
+    qqCookie: '',
 }
 
 // GitHub 最新 release 信息
