@@ -249,6 +249,14 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             path_ready = true;
             log::info!("任务 {} 开始下载，文件路径: {}", ctx.task_id, download_dir);
 
+            // SAF 模式下记录父目录与音频文件名，供删除时清理同名 .lrc
+            if is_saf {
+                if let Some(folder) = &saf_folder_uri {
+                    *controller.saf_lrc_meta.lock().await =
+                        Some((folder.clone(), download_dir.clone()));
+                }
+            }
+
             if !is_saf {
                 let parent_dir = Path::new(&download_dir).parent().unwrap_or(Path::new("."));
                 if !parent_dir.exists() {
@@ -803,6 +811,10 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
             } else {
                 log::warn!("任务 {} 取消时未记录 SAF 文件 URI，无法删除", ctx.task_id);
             }
+            // 同步删除同名 .lrc
+            if let Some(folder) = &saf_folder_uri {
+                delete_saf_lrc(&app_handle, folder, &download_dir);
+            }
         } else {
             // 普通模式：使用标准库删除
             if let Err(e) = fs::remove_file(&download_dir) {
@@ -883,6 +895,39 @@ pub(crate) fn delete_sidecar_lrc(audio_path: &str) {
         Ok(()) => log::info!("已删除歌词: {}", lrc.display()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => log::warn!("删除歌词失败 {}: {}", lrc.display(), e),
+    }
+}
+
+/// SAF 模式下删除音频同名的 `.lrc`。
+/// folder_json 是父目录的 FsUri JSON，audio_name 是音频文件名（含扩展名）。
+pub(crate) fn delete_saf_lrc(app_handle: &AppHandle, folder_json: &str, audio_name: &str) {
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app_handle, folder_json, audio_name);
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        let parent_uri = match FsUri::from_json_str(folder_json) {
+            Ok(uri) => uri,
+            Err(e) => {
+                log::warn!("解析 SAF 目录失败，无法删除歌词: {}", e);
+                return;
+            }
+        };
+        let lrc_name = crate::utils::quality::sidecar_lrc_path(audio_name);
+        let api = app_handle.android_fs();
+        // 尝试在父目录中查找已存在的 .lrc
+        if let Ok(lrc_uri) = api.resolve_file_uri(&parent_uri, &lrc_name) {
+            if let Err(e) = api.remove_file(&lrc_uri) {
+                log::warn!("删除 SAF 歌词失败: {}", e);
+            } else {
+                log::info!("已删除 SAF 歌词: {}", lrc_name.display());
+            }
+        } else {
+            // 歌词不存在，无需删除
+            log::debug!("SAF 歌词不存在，无需删除: {}", lrc_name.display());
+        }
     }
 }
 

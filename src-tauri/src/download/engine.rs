@@ -22,6 +22,8 @@ pub struct TaskController {
     pub delete_file_on_cancel: Arc<AtomicBool>,
     /// 下载线程确定的最终文件路径（供外部删除使用）
     pub final_path: Arc<Mutex<Option<String>>>,
+    /// SAF 模式下记录父目录 JSON 与歌词文件名，供删除时清理 .lrc
+    pub saf_lrc_meta: Arc<Mutex<Option<(String, String)>>>,
     /// 任务是否已由调度器启动
     pub started: Arc<AtomicBool>,
     /// 任务完成或退出的通知（用于 remove 等待）
@@ -81,6 +83,7 @@ impl DownloadEngine {
             url_ready: Arc::new(Notify::new()),
             delete_file_on_cancel: Arc::new(AtomicBool::new(false)),
             final_path: Arc::new(Mutex::new(None)),
+            saf_lrc_meta: Arc::new(Mutex::new(None)),
             started: Arc::new(AtomicBool::new(false)),
             done: Arc::new(Notify::new()),
         };
@@ -144,6 +147,7 @@ impl DownloadEngine {
             url_ready: Arc::new(Notify::new()),
             delete_file_on_cancel: Arc::new(AtomicBool::new(false)),
             final_path: ctx.final_path.clone(), // 共享同一个 final_path
+            saf_lrc_meta: Arc::new(Mutex::new(None)),
             started: Arc::new(AtomicBool::new(false)),
             done: Arc::new(Notify::new()),
         };
@@ -365,6 +369,17 @@ impl DownloadEngine {
                     match api.remove_file(&fs_uri) {
                         Ok(()) => {
                             log::info!("已删除 SAF 文件: {}", fs_uri.uri);
+                            // 同步删除同名 .lrc
+                            if let Some(ctrl) = &controller {
+                                let lrc_meta = ctrl.saf_lrc_meta.lock().await.clone();
+                                if let Some((folder_json, audio_name)) = lrc_meta {
+                                    crate::download::task::delete_saf_lrc(
+                                        &self.app_handle,
+                                        &folder_json,
+                                        &audio_name,
+                                    );
+                                }
+                            }
                         }
                         Err(e) => {
                             log::error!("删除 SAF 文件失败 {}: {}", fs_uri.uri, e);
