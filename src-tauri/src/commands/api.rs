@@ -479,11 +479,18 @@ async fn get_download_link_for_filename(
 /// 参数：song_id 为歌曲 mid，filename 为品质文件名（如 M800001abc.mp3）
 /// 返回 (完整下载链接, 解密密钥, 实际使用的品质文件名)
 ///
-/// 未登录时普通音质（mp3/m4a/ape）的 `CgiGetVkey` 会返回 104003。
-/// 此时只尝试比请求更低的加密音质（ogg），不会升到 flac。
+/// 取链顺序：
+/// 1. QQ 明文/加密取链（按扩展名分流）
+/// 2. 若 QQ 拒绝（104003 等）且请求的是非加密音质（mp3/m4a/ape），
+///    依次尝试网易、酷我备用音源拿 320k mp3 直链（均无需登录），命中则直接返回。
+/// 3. 备用音源都拿不到时，走 QQ 加密回退（降到更低 ogg），作为最后兜底。
+///
+/// `title` / `artist` 仅用于备用音源搜索匹配，可为空（空则跳过备用回退）。
 pub(crate) async fn get_download_link(
     song_id: &str,
     filename: &str,
+    title: &str,
+    artist: &str,
 ) -> Result<(String, String, String), String> {
     let primary = match get_download_link_for_filename(song_id, filename).await {
         Ok((url, key, used)) => crate::utils::quality::LinkAttempt::Ok {
@@ -497,12 +504,65 @@ pub(crate) async fn get_download_link(
         },
     };
 
-    let should_fallback = matches!(
-        &primary,
-        crate::utils::quality::LinkAttempt::Err { error, .. }
-            if crate::utils::quality::is_unavailable_link_error(error)
-    );
+    // QQ 首选成功，直接用
+    if let crate::utils::quality::LinkAttempt::Ok {
+        url,
+        key,
+        filename: used,
+    } = &primary
+    {
+        return Ok((url.clone(), key.clone(), used.clone()));
+    }
 
+    // QQ 拿不到且属于平台拦截类错误时，尝试备用音源（仅对非加密音质有意义）
+    let primary_err = match &primary {
+        crate::utils::quality::LinkAttempt::Err { error, .. } => error.clone(),
+        _ => String::new(),
+    };
+    let blocked = crate::utils::quality::is_unavailable_link_error(&primary_err);
+    let is_plain_quality = !crate::utils::quality::is_encrypted_filename(filename);
+
+    if blocked && is_plain_quality && !title.is_empty() {
+        // 备用音源命中的直链均为明文 mp3，复用 320kmp3 标签与 .mp3 扩展名，
+        // 让下载/命名/解密判断/前端事件逻辑无缝衔接。
+        let media_mid = crate::utils::quality::extract_media_mid(filename);
+        if let Some(media) = media_mid {
+            let backup_filename = format!("M800{}.mp3", media);
+
+            // 2a. 网易
+            log::info!(
+                "QQ 取链失败 ({})，尝试网易备用音源: {} - {}",
+                primary_err,
+                title,
+                artist
+            );
+            match crate::commands::netease::resolve_320_mp3(title, artist).await {
+                Ok(Some(link)) => {
+                    log::info!("网易备用命中: br={} size={}", link.br, link.size);
+                    return Ok((link.url, String::new(), backup_filename));
+                }
+                Ok(None) => log::info!("网易备用音源未找到可用的 320k mp3"),
+                Err(e) => log::warn!("网易备用音源失败: {}", e),
+            }
+
+            // 2b. 酷我（最后兜底音源，320k 与 flac 免登录覆盖广）
+            log::info!("尝试酷我备用音源: {} - {}", title, artist);
+            match crate::commands::kuwo::resolve_320_mp3(title, artist).await {
+                Ok(Some(link)) => {
+                    log::info!("酷我备用命中: url_prefix={}", &link.url[..link.url.len().min(48)]);
+                    return Ok((link.url, String::new(), backup_filename));
+                }
+                Ok(None) => log::info!("酷我备用音源未找到可用资源"),
+                Err(e) => log::warn!("酷我备用音源失败: {}", e),
+            }
+        } else {
+            // filename 无法提取 media_mid（特殊音质如杜比/臻品），跳过备用音源
+            log::warn!("无法从 {} 提取 media_mid，跳过备用音源回退", filename);
+        }
+    }
+
+    // 最后兜底：QQ 加密回退（降到更低 ogg）
+    let should_fallback = blocked;
     let mut fallback_attempts = Vec::new();
     if should_fallback {
         for fallback in crate::utils::quality::lower_encrypted_fallbacks(filename) {
@@ -535,8 +595,19 @@ pub(crate) async fn get_download_link(
 }
 
 #[command]
-pub async fn fetch_download_link(song_id: String, filename: String) -> Result<String, String> {
-    let (url, key, used_filename) = get_download_link(&song_id, &filename).await?;
+pub async fn fetch_download_link(
+    song_id: String,
+    filename: String,
+    title: Option<String>,
+    artist: Option<String>,
+) -> Result<String, String> {
+    let (url, key, used_filename) = get_download_link(
+        &song_id,
+        &filename,
+        title.as_deref().unwrap_or(""),
+        artist.as_deref().unwrap_or(""),
+    )
+    .await?;
     let result = json!({ "url": url, "key": key, "filename": used_filename });
     Ok(result.to_string())
 }

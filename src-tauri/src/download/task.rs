@@ -64,16 +64,18 @@ pub struct TaskContext {
 
 /// 重试获取下载链接。
 /// 仅对瞬时网络错误重试；平台拒绝（104003 / 无法获取下载链接）立即返回，
-/// 由 `get_download_link` 内部走加密回退。
+/// 由 `get_download_link` 内部走网易备用音源与加密回退。
 /// 返回 (url, ekey, 实际品质文件名)。
 async fn fetch_download_link_with_retry(
     song_id: &str,
     filename: &str,
     task_id: &str,
+    title: &str,
+    artist: &str,
 ) -> Result<(String, String, String), String> {
     let mut last_err = String::new();
     for attempt in 0..3 {
-        match api::get_download_link(song_id, filename).await {
+        match api::get_download_link(song_id, filename, title, artist).await {
             Ok(link) => return Ok(link),
             Err(e) => {
                 last_err = e;
@@ -189,8 +191,14 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 
         // 如果没有有效链接，实时获取（首次进入或暂停恢复后）
         if url.is_empty() {
-            match fetch_download_link_with_retry(&ctx.song_id, &ctx.quality_filename, &ctx.task_id)
-                .await
+            match fetch_download_link_with_retry(
+                &ctx.song_id,
+                &ctx.quality_filename,
+                &ctx.task_id,
+                &ctx.song_info.title,
+                &ctx.song_info.artist,
+            )
+            .await
             {
                 Ok((new_url, new_key, used_filename)) => {
                     url = new_url;

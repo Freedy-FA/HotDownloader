@@ -30,3 +30,6 @@ dist-apk/
 *.keystore
 *.jks
 src-tauri/gen/android/keystore.properties
+
+# CI 产物
+dist-apk-ci/
