@@ -3,6 +3,7 @@ pub mod file_ops;
 pub mod history;
 pub mod kuwo;
 pub mod login;
+pub mod lx;
 pub mod netease;
 pub mod settings;
 pub mod source_match;

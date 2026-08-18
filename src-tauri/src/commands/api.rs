@@ -213,16 +213,16 @@ fn build_qualities(file: &Value, vs: &Value) -> Vec<Value> {
 
     // 标准品质，按顺序定义 (前端标签, 文件前缀, 后缀, 文件大小字段名)
     let standard_qualities: Vec<(&str, &str, &str, &str)> = vec![
-        ("48kacc",   "C200", ".m4a",   "size_48aac"),
-        ("96kacc",   "C400", ".m4a",   "size_96aac"),
-        ("192kacc",  "C600", ".m4a",   "size_192aac"),
-        ("96kogg",   "O4M0", ".mgg",   "size_96ogg"),
-        ("192kogg",  "O6M0", ".mgg",   "size_192ogg"),
-        ("128kmp3",  "M500", ".mp3",   "size_128mp3"),
-        ("320kmp3",  "M800", ".mp3",   "size_320mp3"),
-        ("ape",      "A000", ".ape",   "size_ape"),
-        ("flac",     "F0M0", ".mflac", "size_flac"),
-        ("hires",    "RSM1", ".mflac", "size_hires"),
+        ("48kacc", "C200", ".m4a", "size_48aac"),
+        ("96kacc", "C400", ".m4a", "size_96aac"),
+        ("192kacc", "C600", ".m4a", "size_192aac"),
+        ("96kogg", "O4M0", ".mgg", "size_96ogg"),
+        ("192kogg", "O6M0", ".mgg", "size_192ogg"),
+        ("128kmp3", "M500", ".mp3", "size_128mp3"),
+        ("320kmp3", "M800", ".mp3", "size_320mp3"),
+        ("ape", "A000", ".ape", "size_ape"),
+        ("flac", "F0M0", ".mflac", "size_flac"),
+        ("hires", "RSM1", ".mflac", "size_hires"),
     ];
 
     for (label, prefix, suffix, size_key) in &standard_qualities {
@@ -281,10 +281,7 @@ fn build_qualities(file: &Value, vs: &Value) -> Vec<Value> {
 /// https://github.com/chrisdong/FileHub/blob/e1d752e1f29f877b7c895ae5aaff32a179fad051/root/importURLs/lxmusic/HeiMusic%E8%81%9A%E5%90%88%E6%BA%90_v1.1.5.js#L287
 async fn fetch_encrypted_link(song_id: &str, filename: &str) -> Result<(String, String), String> {
     let session = crate::utils::auth::current_session();
-    let qq = session
-        .as_ref()
-        .map(|s| s.uin.as_str())
-        .unwrap_or("0");
+    let qq = session.as_ref().map(|s| s.uin.as_str()).unwrap_or("0");
     let request_body = json!({
         "comm": {
             "ct": "19",
@@ -378,10 +375,7 @@ async fn fetch_encrypted_link(song_id: &str, filename: &str) -> Result<(String, 
 /// https://github.com/lyswhut/lx-music-source/blob/55eb9881dad6ca895505352f3a0a7d1dfa3444e0/src/apis/tx.js#L30
 async fn fetch_plain_link(song_id: &str, filename: &str) -> Result<(String, String), String> {
     let session = crate::utils::auth::current_session();
-    let uin = session
-        .as_ref()
-        .map(|s| s.uin.as_str())
-        .unwrap_or("0");
+    let uin = session.as_ref().map(|s| s.uin.as_str()).unwrap_or("0");
     let request_body = json!({
         "comm": {
             "ct": 24,
@@ -482,7 +476,7 @@ async fn get_download_link_for_filename(
 /// 取链顺序：
 /// 1. QQ 明文/加密取链（按扩展名分流）
 /// 2. 若 QQ 拒绝（104003 等）且请求的是非加密音质（mp3/m4a/ape），
-///    依次尝试网易、酷我备用音源拿 320k mp3 直链（均无需登录），命中则直接返回。
+///    先用 QQ songmid 走 LX 聚合/野花，再按歌名匹配网易、酷我拿直链。
 /// 3. 备用音源都拿不到时，走 QQ 加密回退（降到更低 ogg），作为最后兜底。
 ///
 /// `title` / `artist` 仅用于备用音源搜索匹配，可为空（空则跳过备用回退）。
@@ -529,7 +523,29 @@ pub(crate) async fn get_download_link(
         if let Some(media) = media_mid {
             let backup_filename = format!("M800{}.mp3", media);
 
-            // 2a. 网易
+            // 2a. LX 聚合 / 野花：用 QQ songmid 精确取链，避免歌名误匹配
+            log::info!(
+                "QQ 取链失败 ({})，尝试 LX 音源: {} - {} ({})",
+                primary_err,
+                title,
+                artist,
+                song_id
+            );
+            match crate::commands::lx::resolve_tx_url(song_id, title, artist, filename).await {
+                Ok(Some(link)) => {
+                    let used = crate::commands::lx::backup_filename(media, &link.quality);
+                    log::info!(
+                        "LX 音源命中: quality={} url_prefix={}",
+                        link.quality,
+                        &link.url[..link.url.len().min(48)]
+                    );
+                    return Ok((link.url, String::new(), used));
+                }
+                Ok(None) => log::info!("LX 音源未找到可用资源"),
+                Err(e) => log::warn!("LX 音源失败: {}", e),
+            }
+
+            // 2b. 网易
             log::info!(
                 "QQ 取链失败 ({})，尝试网易备用音源: {} - {}",
                 primary_err,
@@ -545,11 +561,14 @@ pub(crate) async fn get_download_link(
                 Err(e) => log::warn!("网易备用音源失败: {}", e),
             }
 
-            // 2b. 酷我（最后兜底音源，320k 与 flac 免登录覆盖广）
+            // 2c. 酷我（最后兜底音源，320k 与 flac 免登录覆盖广）
             log::info!("尝试酷我备用音源: {} - {}", title, artist);
             match crate::commands::kuwo::resolve_320_mp3(title, artist).await {
                 Ok(Some(link)) => {
-                    log::info!("酷我备用命中: url_prefix={}", &link.url[..link.url.len().min(48)]);
+                    log::info!(
+                        "酷我备用命中: url_prefix={}",
+                        &link.url[..link.url.len().min(48)]
+                    );
                     return Ok((link.url, String::new(), backup_filename));
                 }
                 Ok(None) => log::info!("酷我备用音源未找到可用资源"),
@@ -566,11 +585,7 @@ pub(crate) async fn get_download_link(
     let mut fallback_attempts = Vec::new();
     if should_fallback {
         for fallback in crate::utils::quality::lower_encrypted_fallbacks(filename) {
-            log::info!(
-                "品质 {} 无法获取链接，尝试加密回退 {}",
-                filename,
-                fallback
-            );
+            log::info!("品质 {} 无法获取链接，尝试加密回退 {}", filename, fallback);
             match fetch_encrypted_link(song_id, &fallback).await {
                 Ok((url, key)) => fallback_attempts.push(crate::utils::quality::LinkAttempt::Ok {
                     url,
