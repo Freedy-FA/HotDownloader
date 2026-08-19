@@ -1,5 +1,5 @@
-use tauri::{AppHandle, command};
 use crate::storage::store_wrapper;
+use tauri::{command, AppHandle};
 
 #[command]
 pub fn load_history(app: AppHandle) -> Result<String, String> {

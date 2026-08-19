@@ -222,16 +222,16 @@ fn build_qualities(file: &Value, vs: &Value) -> Vec<Value> {
 
     // 标准品质，按顺序定义 (前端标签, 文件前缀, 后缀, 文件大小字段名)
     let standard_qualities: Vec<(&str, &str, &str, &str)> = vec![
-        ("48kacc",   "C200", ".m4a",   "size_48aac"),
-        ("96kacc",   "C400", ".m4a",   "size_96aac"),
-        ("192kacc",  "C600", ".m4a",   "size_192aac"),
-        ("96kogg",   "O4M0", ".mgg",   "size_96ogg"),
-        ("192kogg",  "O6M0", ".mgg",   "size_192ogg"),
-        ("128kmp3",  "M500", ".mp3",   "size_128mp3"),
-        ("320kmp3",  "M800", ".mp3",   "size_320mp3"),
-        ("ape",      "A000", ".ape",   "size_ape"),
-        ("flac",     "F0M0", ".mflac", "size_flac"),
-        ("hires",    "RSM1", ".mflac", "size_hires"),
+        ("48kacc", "C200", ".m4a", "size_48aac"),
+        ("96kacc", "C400", ".m4a", "size_96aac"),
+        ("192kacc", "C600", ".m4a", "size_192aac"),
+        ("96kogg", "O4M0", ".mgg", "size_96ogg"),
+        ("192kogg", "O6M0", ".mgg", "size_192ogg"),
+        ("128kmp3", "M500", ".mp3", "size_128mp3"),
+        ("320kmp3", "M800", ".mp3", "size_320mp3"),
+        ("ape", "A000", ".ape", "size_ape"),
+        ("flac", "F0M0", ".mflac", "size_flac"),
+        ("hires", "RSM1", ".mflac", "size_hires"),
     ];
 
     for (label, prefix, suffix, size_key) in &standard_qualities {
