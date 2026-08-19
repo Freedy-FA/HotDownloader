@@ -169,12 +169,19 @@ async fn write_metadata(
             log::warn!("读取 SAF 文件失败: {}", e);
             return;
         }
+        // 从原始文件名提取扩展名，保证临时文件能被 lofty 正确识别格式
+        // 例如原始文件为 "xxx.flac"，则临时文件使用 ".flac" 后缀
+        let ext = Path::new(file_path)
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("tmp");
         let temp = std::env::temp_dir().join(format!(
-            "{}.metadata",
+            "{}.{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_millis()
+                .as_millis(),
+            ext
         ));
         if let Err(e) = std::fs::write(&temp, &buf) {
             log::warn!("写入临时文件失败: {}", e);
