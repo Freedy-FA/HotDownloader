@@ -1,12 +1,16 @@
 use std::collections::VecDeque;
 use std::fs::{self, OpenOptions};
-use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::io::{BufWriter, Read, Seek, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
+use lofty::config::WriteOptions;
+use lofty::file::{AudioFile, TaggedFileExt};
+use lofty::picture::{Picture, PictureType};
+use lofty::tag::{ItemKey, Tag};
 use once_cell::sync::Lazy;
 use reqwest::header::{CONTENT_LENGTH, RANGE};
 use reqwest::StatusCode;
@@ -39,6 +43,7 @@ pub struct SongInfo {
     pub artist: String,
     pub album: String,
     pub quality: String,
+    pub cover_url: String, // 封面 URL，用于写入音频标签
 }
 
 /// 单个任务的上下文信息
@@ -46,8 +51,7 @@ pub struct SongInfo {
 pub struct TaskContext {
     pub task_id: String,
     pub song_mid: String, // 歌曲字符串标识（QQ音乐 mid）
-    #[allow(dead_code)] // 预留：后续歌词 metadata 写入使用
-    pub song_id: u64, // 歌曲数字 ID
+    pub song_id: u64,     // 歌曲数字 ID
     pub url: String,
     pub save_path: String, // 最终文件路径
     #[allow(dead_code)] // 抑制未使用警告，保留备用
@@ -96,6 +100,187 @@ fn is_retryable_network_error(err: &reqwest::Error) -> bool {
     err.is_timeout() || err.is_connect() || (err.is_request() && !err.is_body())
 }
 
+/// 将歌词与封面写入音频文件 metadata
+/// 普通模式直接操作文件路径；SAF 模式通过临时文件回写实现跨平台支持
+/// 所有错误仅记录日志，不阻止下载完成事件的发送
+async fn write_metadata(
+    app_handle: &AppHandle,
+    song_id: u64,
+    file_path: &str,
+    is_saf: bool,
+    saf_file_uri: Option<String>,
+    cover_url: &str,
+) {
+    // 1. 获取歌词：优先逐字歌词，其次普通歌词
+    let lyric_text = match crate::commands::lyrics::get_lyric_by_id(song_id).await {
+        Ok(resp) => {
+            // 优先级：逐字歌词（elrc） → 普通歌词（lrc）
+            if let Some(elrc) = resp.elrc.filter(|s| !s.trim().is_empty()) {
+                Some(elrc)
+            } else if let Some(lrc) = resp.lrc.filter(|s| !s.trim().is_empty()) {
+                Some(lrc)
+            } else {
+                None
+            }
+        }
+        Err(e) => {
+            log::warn!("获取歌词失败: {}", e);
+            None
+        }
+    };
+
+    // 2. 下载封面图片字节
+    let cover_bytes = if !cover_url.is_empty() {
+        match api::CLIENT.get(cover_url).send().await {
+            Ok(resp) if resp.status().is_success() => resp.bytes().await.ok().map(|b| b.to_vec()),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    if lyric_text.is_none() && cover_bytes.is_none() {
+        log::info!("无可用歌词或封面，跳过 metadata 写入");
+        return;
+    }
+
+    // 3. 准备本地临时路径：SAF 需先复制到临时文件
+    let temp_path = if is_saf {
+        let uri = match &saf_file_uri {
+            Some(u) => u.clone(),
+            None => {
+                log::warn!("SAF 文件 URI 缺失，无法写入 metadata");
+                return;
+            }
+        };
+        let fs_uri = FsUri::from_uri(uri);
+        let api = app_handle.android_fs();
+
+        // 读取 SAF 文件并写入临时文件
+        let mut src = match api.open_file(&fs_uri, FileAccessMode::Read) {
+            Ok(f) => f,
+            Err(e) => {
+                log::warn!("打开 SAF 文件读取失败: {}", e);
+                return;
+            }
+        };
+        let mut buf = Vec::new();
+        if let Err(e) = src.read_to_end(&mut buf) {
+            log::warn!("读取 SAF 文件失败: {}", e);
+            return;
+        }
+        let temp = std::env::temp_dir().join(format!(
+            "{}.metadata",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ));
+        if let Err(e) = std::fs::write(&temp, &buf) {
+            log::warn!("写入临时文件失败: {}", e);
+            return;
+        }
+        temp
+    } else {
+        PathBuf::from(file_path)
+    };
+
+    // 4. 修改 metadata
+    let mut tagged_file = match lofty::read_from_path(&temp_path) {
+        Ok(f) => f,
+        Err(e) => {
+            log::warn!("读取音频文件失败: {}", e);
+            if is_saf {
+                let _ = std::fs::remove_file(&temp_path);
+            }
+            return;
+        }
+    };
+
+    // 确保存在主标签
+    let tag_type = tagged_file.primary_tag_type();
+    if tagged_file.primary_tag().is_none() {
+        // 没有主标签时创建对应类型的空标签
+        let new_tag = Tag::new(tag_type);
+        tagged_file.insert_tag(new_tag);
+    }
+
+    let tag = match tagged_file.primary_tag_mut() {
+        Some(t) => t,
+        None => {
+            log::warn!("无法获取音频标签，跳过写入");
+            if is_saf {
+                let _ = std::fs::remove_file(&temp_path);
+            }
+            return;
+        }
+    };
+
+    // 写入歌词
+    if let Some(lyric) = lyric_text {
+        tag.remove_key(&ItemKey::Lyrics);
+        tag.insert_text(ItemKey::Lyrics, lyric.clone());
+    }
+
+    // 写入封面
+    if let Some(bytes) = cover_bytes {
+        let picture = Picture::new_unchecked(
+            PictureType::CoverFront,
+            Some(lofty::picture::MimeType::Jpeg),
+            None,
+            bytes,
+        );
+        // 移除旧的封面图片，避免重复
+        tag.remove_picture_type(PictureType::CoverFront);
+        tag.push_picture(picture);
+    }
+
+    // 保存 metadata
+    if let Err(e) = tagged_file.save_to_path(&temp_path, WriteOptions::default()) {
+        log::warn!("保存 metadata 失败: {}", e);
+    } else {
+        log::info!("metadata 已写入: {}", temp_path.display());
+    }
+
+    // 5. SAF 模式：将临时文件写回原文件
+    if is_saf {
+        if let Some(uri) = saf_file_uri {
+            let fs_uri = FsUri::from_uri(uri);
+            let api = app_handle.android_fs();
+            match api.open_file(&fs_uri, FileAccessMode::ReadWrite) {
+                Ok(mut dst) => {
+                    let data = match std::fs::read(&temp_path) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            log::warn!("读取临时文件失败: {}", e);
+                            let _ = std::fs::remove_file(&temp_path);
+                            return;
+                        }
+                    };
+                    // 清空原文件并从头写入，避免旧数据残留
+                    if let Err(e) = dst.set_len(0) {
+                        log::warn!("清空 SAF 文件失败: {}", e);
+                        let _ = std::fs::remove_file(&temp_path);
+                        return;
+                    }
+                    if let Err(e) = dst.seek(std::io::SeekFrom::Start(0)) {
+                        log::warn!("SAF 文件 seek 失败: {}", e);
+                        let _ = std::fs::remove_file(&temp_path);
+                        return;
+                    }
+                    if let Err(e) = dst.write_all(&data) {
+                        log::warn!("写入 SAF 文件失败: {}", e);
+                    }
+                }
+                Err(e) => {
+                    log::warn!("打开 SAF 文件写入失败: {}", e);
+                }
+            }
+        }
+        let _ = std::fs::remove_file(&temp_path);
+    }
+}
+
 /// 等待暂停恢复，返回 true 表示任务已被取消，应退出下载循环
 async fn wait_for_resume_async(controller: &TaskController) -> bool {
     loop {
@@ -111,12 +296,17 @@ async fn wait_for_resume_async(controller: &TaskController) -> bool {
 
 /// 实际执行下载的函数
 pub async fn download_task(ctx: TaskContext, controller: TaskController, app_handle: AppHandle) {
+    // 获取设置并增加 writeMetadata
+    let (dir_setting, template_setting, saf_uri_setting, write_metadata_enabled) =
+        get_download_settings(&app_handle).await;
     // 1. 构建最终保存路径（只需一次）
     let (is_saf, download_dir, saf_folder_uri) = {
         if !ctx.save_path.is_empty() {
             (false, ctx.save_path.clone(), None)
         } else {
-            let (dir, template, saf_uri) = get_download_settings(&app_handle).await;
+            let dir = dir_setting.clone();
+            let template = template_setting.clone();
+            let saf_uri = saf_uri_setting.clone();
             if dir == "saf://" && cfg!(target_os = "android") && saf_uri.is_some() {
                 let fname = filename::build_filename(&template, &ctx.song_info);
                 let raw_ext = Path::new(&ctx.quality_filename)
@@ -169,6 +359,8 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
     // 流错误重试计数器（防止无限重试）
     let mut stream_retries: u32 = 0;
     const MAX_STREAM_RETRIES: u32 = 2;
+
+    let mut completed_ok = false; // 标记下载是否真正完成
 
     // 下载循环
     'download: loop {
@@ -513,17 +705,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                     break 'download;
                 }
             }
-            let final_display_path = if is_saf {
-                saf_file_uri.clone().unwrap_or_else(|| download_dir.clone())
-            } else {
-                download_dir.clone()
-            };
-            progress::emit_completed(
-                &app_handle,
-                &ctx.task_id,
-                &final_display_path,
-                saf_folder_uri.clone(),
-            );
+            completed_ok = true;
             break 'download;
         }
 
@@ -631,18 +813,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
                     }
                 }
                 log::info!("下载完成: {}", download_dir);
-                // 完成时发送事件，SAF 模式下 final_path 改为完整 URI
-                let final_display_path = if is_saf {
-                    saf_file_uri.clone().unwrap_or_else(|| download_dir.clone())
-                } else {
-                    download_dir.clone()
-                };
-                progress::emit_completed(
-                    &app_handle,
-                    &ctx.task_id,
-                    &final_display_path,
-                    saf_folder_uri.clone(),
-                );
+                completed_ok = true;
                 break 'download;
             }
         }
@@ -675,6 +846,34 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 
     // 显式关闭文件句柄，释放资源
     drop(file);
+
+    // 下载成功后，根据设置决定是否写入 metadata（歌词/封面）
+    if completed_ok {
+        if write_metadata_enabled {
+            write_metadata(
+                &app_handle,
+                ctx.song_id,
+                &download_dir,
+                is_saf,
+                saf_file_uri.clone(),
+                &ctx.song_info.cover_url,
+            )
+            .await;
+        }
+
+        // 无论 metadata 是否写入成功，均发送下载完成事件
+        let final_display_path = if is_saf {
+            saf_file_uri.clone().unwrap_or_else(|| download_dir.clone())
+        } else {
+            download_dir.clone()
+        };
+        progress::emit_completed(
+            &app_handle,
+            &ctx.task_id,
+            &final_display_path,
+            saf_folder_uri.clone(),
+        );
+    }
 
     // 如果任务被取消且用户要求删除文件，执行删除
     if controller.cancel_token.is_cancelled()
@@ -709,7 +908,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 /// 获取下载目录（绝对路径）及文件命名模板
 pub(crate) async fn get_download_settings(
     app_handle: &AppHandle,
-) -> (String, String, Option<String>) {
+) -> (String, String, Option<String>, bool) {
     use crate::storage::store_wrapper;
 
     let default_dir = crate::commands::file_ops::get_default_download_dir_impl(app_handle);
@@ -752,7 +951,13 @@ pub(crate) async fn get_download_settings(
         .unwrap_or(&default_template)
         .to_string();
 
-    (dir, template, saf_folder_uri)
+    // 是否写入歌曲标签（歌词/封面）
+    let write_metadata = settings
+        .get("writeMetadata")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    (dir, template, saf_folder_uri, write_metadata)
 }
 
 /// 将加密文件扩展名映射为解密后的真实扩展名

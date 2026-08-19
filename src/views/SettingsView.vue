@@ -16,6 +16,7 @@
                 <n-form label-placement="top">
                     <DirectorySetting />
                     <NamingTemplate />
+                    <WriteMetadataSetting />
                     <ConcurrencySetting />
                     <JumpToTaskSetting />
                 </n-form>
@@ -29,6 +30,7 @@
                 <DowngradeSetting />
                 <DirectorySetting />
                 <NamingTemplate />
+                <WriteMetadataSetting />
                 <ConcurrencySetting />
                 <JumpToTaskSetting />
                 <ClearHistoryButton />
@@ -89,6 +91,7 @@ import NamingTemplate from '../components/settings/NamingTemplate.vue'
 import ConcurrencySetting from '../components/settings/ConcurrencySetting.vue'
 import JumpToTaskSetting from '../components/settings/JumpToTaskSetting.vue'
 import ClearHistoryButton from '../components/settings/ClearHistoryButton.vue'
+import WriteMetadataSetting from '../components/settings/WriteMetadataSetting.vue'
 import * as musicApi from '../api/musicApi'
 import type { UpdateInfo } from '../types'
 

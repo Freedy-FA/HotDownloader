@@ -32,6 +32,7 @@ export interface Settings {
     // 新增 SAF 文件夹 URI 和名称
     safFolderUri?: string
     safFolderName?: string
+    writeMetadata: boolean
 }
 
 /** 歌曲可用的单个品质项 */
@@ -153,6 +154,7 @@ export const DEFAULT_SETTINGS: Settings = {
     namingTemplate: '{song} - {artist}',
     maxConcurrent: 3,
     jumpToTask: true,
+    writeMetadata: false,
 }
 
 // GitHub 最新 release 信息

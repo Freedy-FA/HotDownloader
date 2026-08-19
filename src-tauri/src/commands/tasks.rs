@@ -27,12 +27,13 @@ pub async fn add_download_task(
     song_title: String,
     artist: String,
     album: String,
+    cover_url: String,
 ) -> Result<(), String> {
     let engine = app.state::<DownloadEngine>();
     engine
         .add_task(
             task_id, song_id, song_mid, url, save_path, quality, filename, key, file_size,
-            song_title, artist, album,
+            song_title, artist, album, cover_url,
         )
         .await;
     Ok(())

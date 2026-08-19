@@ -74,6 +74,7 @@ export const useTaskStore = defineStore('tasks', () => {
             songTitle: task.songTitle,
             artist: task.artist,
             album: task.album,
+            coverUrl: task.coverUrl,
         }).catch((e: any) => {
             console.error('添加任务失败:', e)
             notify()?.error({ title: '添加任务失败', description: e?.message || String(e), duration: 3000 })
