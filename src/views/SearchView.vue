@@ -206,8 +206,8 @@ async function loadMore() {
         const more = response.songs
 
         // 按歌曲 id 去重，避免接口偶发重复数据导致列表混乱
-        const existingIds = new Set(searchResults.value.map((s) => s.id))
-        const newSongs = more.filter((s) => !existingIds.has(s.id))
+        const existingIds = new Set(searchResults.value.map((s) => s.mid))
+        const newSongs = more.filter((s) => !existingIds.has(s.mid))
         searchResults.value = [...searchResults.value, ...newSongs]
 
         currentPage.value = nextPage
@@ -225,7 +225,7 @@ function onSingleDownload(song: SongInfo) {
 }
 
 function onBatchDownload() {
-    const songs = searchResults.value.filter((s) => selectedIds.value.includes(s.id))
+    const songs = searchResults.value.filter((s) => selectedIds.value.includes(s.mid))
     if (songs.length > 0) {
         batchDownload(songs)
     }

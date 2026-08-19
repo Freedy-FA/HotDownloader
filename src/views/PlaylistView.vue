@@ -30,8 +30,8 @@
             </div>
 
             <div class="song-items">
-                <SongItem v-for="song in songs" :key="song.id" :song="song" :selected="selectedIds.includes(song.id)"
-                    @toggle-select="(val) => toggleSelect(song.id, val)" @download="(song) => downloadSingle(song)" />
+                <SongItem v-for="song in songs" :key="song.mid" :song="song" :selected="selectedIds.includes(song.mid)"
+                    @toggle-select="(val) => toggleSelect(song.mid, val)" @download="(song) => downloadSingle(song)" />
             </div>
 
             <BatchDownloadBar v-if="selectedIds.length > 0" :selectedCount="selectedIds.length"
@@ -67,14 +67,14 @@ const isAllSelected = computed(() => songs.value.length > 0 && selectedIds.value
 const isIndeterminate = computed(() => selectedIds.value.length > 0 && selectedIds.value.length < songs.value.length)
 
 function toggleAll(checked: boolean) {
-    selectedIds.value = checked ? songs.value.map(s => s.id) : []
+    selectedIds.value = checked ? songs.value.map(s => s.mid) : []
 }
 
-function toggleSelect(songId: string, selected: boolean) {
+function toggleSelect(songMid: string, selected: boolean) {
     if (selected) {
-        if (!selectedIds.value.includes(songId)) selectedIds.value.push(songId)
+        if (!selectedIds.value.includes(songMid)) selectedIds.value.push(songMid)
     } else {
-        selectedIds.value = selectedIds.value.filter(id => id !== songId)
+        selectedIds.value = selectedIds.value.filter(id => id !== songMid)
     }
 }
 
@@ -113,7 +113,7 @@ async function handleImport() {
 }
 
 function onBatchDownload() {
-    const selectedSongs = songs.value.filter(s => selectedIds.value.includes(s.id))
+    const selectedSongs = songs.value.filter(s => selectedIds.value.includes(s.mid))
     if (selectedSongs.length > 0) {
         batchDownload(selectedSongs)
     }

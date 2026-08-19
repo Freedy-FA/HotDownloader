@@ -15,10 +15,10 @@ export async function searchSongs(
 }
 
 export async function fetchDownloadLink(
-    songId: string,
+    songMid: string,
     filename: string
 ): Promise<{ url: string; key: string }> {
-    const json = await invoke<string>('fetch_download_link', { songId, filename })
+    const json = await invoke<string>('fetch_download_link', { songMid, filename })
     return JSON.parse(json) as { url: string; key: string }
 }
 

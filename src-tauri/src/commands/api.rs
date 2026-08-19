@@ -138,6 +138,13 @@ fn parse_song(song: &Value) -> Option<Value> {
         return None;
     }
 
+    // 数字歌曲 ID，用于歌词接口等需要数字 ID 的场景。
+    // 兼容字段可能以数字或字符串形式出现。
+    let song_id = song["id"]
+        .as_u64()
+        .or_else(|| song["id"].as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(0);
+
     // 必须有 media_mid 才能下载，否则跳过
     let media_mid = song["file"]["media_mid"].as_str().unwrap_or("").to_string();
     if media_mid.is_empty() {
@@ -197,7 +204,8 @@ fn parse_song(song: &Value) -> Option<Value> {
     let qualities = build_qualities(&song["file"], &song["vs"]);
 
     Some(json!({
-        "id": mid,
+        "id": song_id,
+        "mid": mid,
         "title": title,
         "artist": artist,
         "album": album_name,
@@ -280,7 +288,7 @@ fn build_qualities(file: &Value, vs: &Value) -> Vec<Value> {
 
 /// 加密文件（.mgg / .mflac）专用，同时获取 purl 和 ekey
 /// https://github.com/chrisdong/FileHub/blob/e1d752e1f29f877b7c895ae5aaff32a179fad051/root/importURLs/lxmusic/HeiMusic%E8%81%9A%E5%90%88%E6%BA%90_v1.1.5.js#L287
-async fn fetch_encrypted_link(song_id: &str, filename: &str) -> Result<(String, String), String> {
+async fn fetch_encrypted_link(song_mid: &str, filename: &str) -> Result<(String, String), String> {
     let request_body = json!({
         "comm": {
             "ct": "19",
@@ -294,7 +302,7 @@ async fn fetch_encrypted_link(song_id: &str, filename: &str) -> Result<(String, 
             "method": "CgiGetHotVkey",
             "param": {
                 "filename": [filename],
-                "songmid": [song_id]
+                "songmid": [song_mid]
             }
         },
         "music.vkey.GetEVkey.GetEkey": {
@@ -304,7 +312,7 @@ async fn fetch_encrypted_link(song_id: &str, filename: &str) -> Result<(String, 
                 "finfo": [
                     {
                         "filename": filename,
-                        "mid": song_id
+                        "mid": song_mid
                     }
                 ]
             }
@@ -365,7 +373,7 @@ async fn fetch_encrypted_link(song_id: &str, filename: &str) -> Result<(String, 
 
 /// 非加密文件专用，仅获取 purl，无需密钥
 /// https://github.com/lyswhut/lx-music-source/blob/55eb9881dad6ca895505352f3a0a7d1dfa3444e0/src/apis/tx.js#L30
-async fn fetch_plain_link(song_id: &str, filename: &str) -> Result<(String, String), String> {
+async fn fetch_plain_link(song_mid: &str, filename: &str) -> Result<(String, String), String> {
     let request_body = json!({
         "comm": {
             "ct": 24,
@@ -379,7 +387,7 @@ async fn fetch_plain_link(song_id: &str, filename: &str) -> Result<(String, Stri
             "param": {
                 "guid": "10000",
                 "filename": [filename],
-                "songmid": [song_id],
+                "songmid": [song_mid],
                 "songtype": [0]
             }
         }
@@ -441,7 +449,7 @@ async fn fetch_plain_link(song_id: &str, filename: &str) -> Result<(String, Stri
 /// 核心函数：获取下载链接和密钥，供下载模块调用
 /// 获取下载链接与解密密钥（对外统一入口）
 pub(crate) async fn get_download_link(
-    song_id: &str,
+    song_mid: &str,
     filename: &str,
 ) -> Result<(String, String), String> {
     let ext = Path::new(filename)
@@ -451,15 +459,15 @@ pub(crate) async fn get_download_link(
         .unwrap_or_default();
 
     if ext == "mgg" || ext == "mflac" {
-        fetch_encrypted_link(song_id, filename).await
+        fetch_encrypted_link(song_mid, filename).await
     } else {
-        fetch_plain_link(song_id, filename).await
+        fetch_plain_link(song_mid, filename).await
     }
 }
 
 #[command]
-pub async fn fetch_download_link(song_id: String, filename: String) -> Result<String, String> {
-    let (url, key) = get_download_link(&song_id, &filename).await?;
+pub async fn fetch_download_link(song_mid: String, filename: String) -> Result<String, String> {
+    let (url, key) = get_download_link(&song_mid, &filename).await?;
     let result = json!({ "url": url, "key": key });
     Ok(result.to_string())
 }

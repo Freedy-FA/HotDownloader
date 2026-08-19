@@ -45,7 +45,9 @@ pub struct SongInfo {
 #[derive(Clone)]
 pub struct TaskContext {
     pub task_id: String,
-    pub song_id: String,
+    pub song_mid: String, // 歌曲字符串标识（QQ音乐 mid）
+    #[allow(dead_code)] // 预留：后续歌词 metadata 写入使用
+    pub song_id: u64, // 歌曲数字 ID
     pub url: String,
     pub save_path: String, // 最终文件路径
     #[allow(dead_code)] // 抑制未使用警告，保留备用
@@ -63,13 +65,13 @@ pub struct TaskContext {
 
 /// 重试获取下载链接（网络错误时最多尝试 3 次）
 async fn fetch_download_link_with_retry(
-    song_id: &str,
+    song_mid: &str,
     filename: &str,
     task_id: &str,
 ) -> Result<(String, String), String> {
     let mut last_err = String::new();
     for attempt in 0..3 {
-        match api::get_download_link(song_id, filename).await {
+        match api::get_download_link(song_mid, filename).await {
             Ok(link) => return Ok(link),
             Err(e) => {
                 last_err = e;
@@ -184,7 +186,7 @@ pub async fn download_task(ctx: TaskContext, controller: TaskController, app_han
 
         // 如果没有有效链接，实时获取（首次进入或暂停恢复后）
         if url.is_empty() {
-            match fetch_download_link_with_retry(&ctx.song_id, &ctx.quality_filename, &ctx.task_id)
+            match fetch_download_link_with_retry(&ctx.song_mid, &ctx.quality_filename, &ctx.task_id)
                 .await
             {
                 Ok((new_url, new_key)) => {

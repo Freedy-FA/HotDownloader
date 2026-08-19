@@ -43,7 +43,8 @@ export interface QualityItem {
 
 // 歌曲基本信息
 export interface SongInfo {
-    id: string
+    id: number
+    mid: string
     title: string
     artist: string
     album: string
@@ -103,7 +104,8 @@ export interface LyricResponse {
 
 export interface TaskRecord {
     id: string
-    songId: string
+    songId: number
+    songMid: string
     songTitle: string
     artist: string
     album: string

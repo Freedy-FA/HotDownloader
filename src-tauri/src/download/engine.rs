@@ -62,7 +62,8 @@ impl DownloadEngine {
     pub async fn add_task(
         &self,
         task_id: String,
-        song_id: String,
+        song_id: u64,
+        song_mid: String,
         url: String,
         save_path: String,
         quality: String,
@@ -87,6 +88,7 @@ impl DownloadEngine {
         let ctx = TaskContext {
             task_id: task_id.clone(),
             song_id,
+            song_mid,
             url,
             save_path,
             quality: quality.clone(), // 保留原 quality 字段

@@ -1,6 +1,6 @@
-use tauri::{command, AppHandle, Manager};
 use crate::download::engine::DownloadEngine;
 use crate::storage::store_wrapper;
+use tauri::{command, AppHandle, Manager};
 
 #[command]
 pub fn load_tasks(app: AppHandle) -> Result<String, String> {
@@ -16,7 +16,8 @@ pub fn save_tasks(app: AppHandle, tasks_json: String) -> Result<(), String> {
 pub async fn add_download_task(
     app: AppHandle,
     task_id: String,
-    song_id: String,
+    song_id: u64,
+    song_mid: String,
     url: String,
     save_path: String,
     quality: String,
@@ -30,8 +31,8 @@ pub async fn add_download_task(
     let engine = app.state::<DownloadEngine>();
     engine
         .add_task(
-            task_id, song_id, url, save_path, quality, filename, key, file_size, song_title,
-            artist, album,
+            task_id, song_id, song_mid, url, save_path, quality, filename, key, file_size,
+            song_title, artist, album,
         )
         .await;
     Ok(())

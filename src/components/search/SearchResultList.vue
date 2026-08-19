@@ -9,8 +9,8 @@
             </div>
 
             <div class="song-items">
-                <SongItem v-for="song in songs" :key="song.id" :song="song" :selected="selectedIds.includes(song.id)"
-                    @toggle-select="(val) => toggleSelect(song.id, val)"
+                <SongItem v-for="song in songs" :key="song.mid" :song="song" :selected="selectedIds.includes(song.mid)"
+                    @toggle-select="(val) => toggleSelect(song.mid, val)"
                     @download="(song) => $emit('download', song)" />
             </div>
 
@@ -65,18 +65,18 @@ const isIndeterminate = computed(
 
 function toggleAll(checked: boolean) {
     if (checked) {
-        emit('update:selectedIds', props.songs.map((s) => s.id))
+        emit('update:selectedIds', props.songs.map((s) => s.mid))
     } else {
         emit('update:selectedIds', [])
     }
 }
 
-function toggleSelect(songId: string, selected: boolean) {
+function toggleSelect(songMid: string, selected: boolean) {
     let newIds: string[]
     if (selected) {
-        newIds = [...props.selectedIds, songId]
+        newIds = [...props.selectedIds, songMid]
     } else {
-        newIds = props.selectedIds.filter((id) => id !== songId)
+        newIds = props.selectedIds.filter((id) => id !== songMid)
     }
     emit('update:selectedIds', newIds)
 }

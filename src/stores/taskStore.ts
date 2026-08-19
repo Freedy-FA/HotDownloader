@@ -64,6 +64,7 @@ export const useTaskStore = defineStore('tasks', () => {
         invoke('add_download_task', {
             taskId: task.id,
             songId: task.songId,
+            songMid: task.songMid,
             url: '',
             savePath: '',
             quality: task.quality,
