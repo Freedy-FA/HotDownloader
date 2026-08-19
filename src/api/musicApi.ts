@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { SongInfo, SearchResponse, SearchSuggestionData, PlaylistSongsResponse, UpdateInfo } from '../types'
+import type { SongInfo, SearchResponse, SearchSuggestionData, PlaylistSongsResponse, UpdateInfo, LyricResponse } from '../types'
 
 export async function searchSongs(
     keyword: string,
@@ -44,4 +44,12 @@ export async function fetchPlaylistSongs(input: string): Promise<PlaylistSongsRe
 export async function checkForUpdate(): Promise<UpdateInfo> {
     const json = await invoke<string>('check_update')
     return JSON.parse(json) as UpdateInfo
+}
+
+/**
+ * 根据 QQ 音乐歌曲 ID 获取歌词
+ * @param songId QQ 音乐歌曲 ID
+ */
+export async function getLyricBySongId(songId: number): Promise<LyricResponse> {
+    return invoke<LyricResponse>('get_lyric_by_id', { songId });
 }

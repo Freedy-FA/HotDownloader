@@ -93,6 +93,14 @@ export interface SearchSuggestionData {
     mv: SearchSuggestionItem[]
 }
 
+// 歌词响应
+export interface LyricResponse {
+    lrc: string | null;
+    elrc: string | null;
+    raw: string | null;
+    instrumental: boolean;
+}
+
 export interface TaskRecord {
     id: string
     songId: string
